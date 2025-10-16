@@ -1,9 +1,8 @@
-
 -- CREATE DATABASE IF NOT EXISTS idle_todo_secure;
 USE dailyvault;
 
 CREATE TABLE IF NOT EXISTS Users (
-    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id CHAR(36) PRIMARY KEY DEFAULT (UUID()),  -- UUID as primary key
     username_enc TEXT NOT NULL,           -- Encrypted username
     email_enc TEXT NOT NULL,              -- Encrypted email
     password_enc TEXT NOT NULL,           -- Encrypted password
@@ -52,6 +51,7 @@ CREATE TABLE IF NOT EXISTS Subtasks (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (task_id) REFERENCES Tasks(task_id) ON DELETE CASCADE
 );
+
 CREATE TABLE IF NOT EXISTS Notifications (
     notification_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -63,12 +63,32 @@ CREATE TABLE IF NOT EXISTS Notifications (
     FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (task_id) REFERENCES Tasks(task_id) ON DELETE CASCADE
 );
+
 CREATE TABLE IF NOT EXISTS ActivityLog (
     log_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     task_id INT,
+    diary_id INT,
     action_type ENUM('create', 'update', 'delete', 'complete', 'login', 'logout') NOT NULL,
     action_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (task_id) REFERENCES Tasks(task_id) ON DELETE SET NULL
+);
+
+
+CREATE TABLE IF NOT EXISTS DiaryEntries (
+    entry_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    title_encrypted VARCHAR(1024) NULL,
+    content_encrypted LONGTEXT NOT NULL,
+    mood ENUM('happy','sad','neutral','excited','angry') DEFAULT 'neutral',
+    tags_encrypted VARCHAR(1024) NULL,
+    visibility ENUM('Private','Public') DEFAULT 'Private',
+    emotion_score FLOAT DEFAULT NULL,
+    entry_date DATETIME DEFAULT CURRENT_TIMESTAMP, -- store date + time
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE,
+    INDEX idx_entries_user_date (user_id, entry_date),
+    INDEX idx_entries_user_created (user_id, created_at)
 );
