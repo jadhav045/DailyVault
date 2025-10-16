@@ -117,7 +117,7 @@ export default function Register() {
         try {
             await api.put("/auth/updatePassword", { email, password });
             toast.success("Password set. Registration complete. Please login.");
-            navigate("/");
+            navigate("/login");
         } catch (err) {
             handleApiError(err, "Setting password failed");
         } finally {
@@ -269,7 +269,7 @@ export default function Register() {
                         Already have an account?{" "}
                         <button
                             type="button"
-                            onClick={() => navigate("/")}
+                            onClick={() => navigate("/login")}
                             className="font-medium text-indigo-600 hover:underline"
                         >
                             Login here

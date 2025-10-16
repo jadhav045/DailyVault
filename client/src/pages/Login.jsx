@@ -19,7 +19,7 @@ export default function Login() {
             const token = res.data.token;
             localStorage.setItem("authToken", token);
             toast.success(res.data.message);
-            navigate("/dashboard");
+            navigate("/app/dashboard");
         } catch (error) {
             handleApiError(error, "Login failed");
         } finally {

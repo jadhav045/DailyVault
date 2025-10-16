@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { escape } from "mysql2";
 import { sendEmail } from "../utils/sendEmail.js";
+import { v4 as uuidv4 } from "uuid";
 
 export const register = async (req, res) => {
     try {
@@ -23,7 +24,7 @@ export const register = async (req, res) => {
         // ✅ Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // ✅ Insert new user and capture inserted id
+        // Insert user letting the DB set auto-increment user_id (avoid inserting UUID into an INT column)
         const [insertResult] = await db
             .promise()
             .query("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)", [
@@ -31,8 +32,21 @@ export const register = async (req, res) => {
                 email,
                 hashedPassword,
             ]);
+        const insertedId = insertResult.insertId;
 
-        const newUserId = insertResult.insertId;
+        // Ensure user_uuid column exists (add if missing) and populate it with a generated UUID
+        const newUuid = uuidv4();
+        const [colCheck] = await db
+            .promise()
+            .query(
+                "SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'user_uuid'"
+            );
+        if (colCheck[0].cnt === 0) {
+            // add the column (nullable for safety)
+            await db.promise().query("ALTER TABLE users ADD COLUMN user_uuid CHAR(36) NULL");
+        }
+        // update the newly inserted row with user_uuid
+        await db.promise().query("UPDATE users SET user_uuid = ? WHERE user_id = ?", [newUuid, insertedId]);
 
         // ✅ Generate a 6-digit OTP for email verification
         const generated_otp = Math.floor(100000 + Math.random() * 900000);
@@ -44,7 +58,7 @@ export const register = async (req, res) => {
             .query("UPDATE users SET otp = ?, otp_expires_at = ? WHERE user_id = ?", [
                 generated_otp,
                 expiryTime,
-                newUserId,
+                insertedId,
             ]);
 
         // 5️⃣ Send OTP email
@@ -90,15 +104,14 @@ export const login = async (req, res) => {
         if (!isMatch)
             return res.status(400).json({ message: "Invalid credentials." });
 
-        // ✅ Generate JWT token (include common id claim names for clients)
-        // Use user.id (from DB) — avoid undefined user.user_id
+        // Prefer the UUID column for client identity/encryption when present, otherwise fallback to numeric id
+        const identity = user.user_uuid ?? String(user.user_id);
         const token = jwt.sign(
             {
-                id: user.user_id,
+                id: identity,
                 email: user.email,
-                // include alternative claim names so various clients/parsers can find the id easily
-                sub: String(user.id),
-                // user_id: user.id,
+                sub: String(identity),
+                user_id: identity,
             },
             process.env.JWT_SECRET,
             { expiresIn: "1d" }
@@ -110,7 +123,6 @@ export const login = async (req, res) => {
         res.status(500).json({ message: "Internal server error." });
     }
 };
-
 
 
 
