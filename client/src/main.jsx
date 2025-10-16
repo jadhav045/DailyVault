@@ -5,6 +5,7 @@ import { ToastContainer, Slide } from "react-toastify";
 // import "react-toastify/dist/ReactToastify.css";
 // import { ToastContainer, Slide } from "react-toastify";
 import "./index.css";
+import "quill/dist/quill.snow.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
 

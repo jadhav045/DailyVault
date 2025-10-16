@@ -21,9 +21,7 @@ export default function Layout({ children }) {
 				<nav className="p-4 space-y-2">
 					<Link to="/app/dashboard" className="block px-3 py-2 rounded hover:bg-indigo-50">Dashboard</Link>
 					<Link to="/app/tasks" className="block px-3 py-2 rounded hover:bg-indigo-50">Tasks</Link>
-					<Link to="/app/categories" className="block px-3 py-2 rounded hover:bg-indigo-50">Categories</Link>
-					<Link to="/app/reminders" className="block px-3 py-2 rounded hover:bg-indigo-50">Reminders</Link>
-					<Link to="/app/pomodoro" className="block px-3 py-2 rounded hover:bg-indigo-50">Pomodoro</Link>
+					<Link to="/app/diary" className="block px-3 py-2 rounded hover:bg-indigo-50">Diary</Link>
 				</nav>
 				<div className="p-4 border-t">
 					<button onClick={handleLogout} className="w-full rounded bg-red-500 text-white px-3 py-2">Logout</button>
