@@ -2,6 +2,8 @@
   "type": "module",
   "scripts": {
     "start": "nodemon server.js",
+        "build": "npx sequelize-cli db:migrate",
+
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
