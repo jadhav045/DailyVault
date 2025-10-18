@@ -1,44 +1,51 @@
-import db from "../config/db.config.js";
+import pool from "../config/db.config.js";
 import jwt from "jsonwebtoken";
 
 /* helper: get numeric user_id from request
    - Tries Authorization Bearer token (id claim may be UUID or numeric)
    - Falls back to req.query.user_id / req.query.user_uuid / req.body.*
 */
+
+// Fix: Always resolve to numeric user_id, even if JWT contains a UUID
 async function resolveUserIdFromReq(req) {
-	// 1) try Authorization header
 	const authHeader = req.headers?.authorization;
 	if (authHeader && authHeader.startsWith("Bearer ")) {
 		const token = authHeader.split(" ")[1];
 		try {
 			const payload = jwt.verify(token, process.env.JWT_SECRET);
-			const id = payload?.id ?? payload?.user_id ?? null;
+			// If payload.id is a UUID, look up numeric user_id
+			let id = payload?.id ?? payload?.user_id ?? null;
 			if (id) {
-				// numeric?
-				const asInt = parseInt(id, 10);
-				if (!isNaN(asInt) && String(asInt) === String(id)) return asInt;
-				// otherwise treat as uuid -> lookup numeric user_id
-				const [rows] = await db.promise().query("SELECT user_id FROM users WHERE user_uuid = ? LIMIT 1", [id]);
-				return rows[0]?.user_id ?? null;
+				// If id is numeric, use directly
+				if (/^\d+$/.test(id)) return parseInt(id, 10);
+				// Otherwise, treat as UUID and look up user_id
+				const { rows } = await pool.query(
+					"SELECT user_id FROM users WHERE user_id = $1 LIMIT 1",
+					[id]
+				);
+				if (rows[0]?.user_id) return rows[0].user_id;
 			}
 		} catch (e) {
-			// invalid token -> ignore and fallback
+			console.warn("Could not verify JWT:", e.message);
+			return null;
 		}
 	}
-
-	// 2) fallback to query/body params
+	// Fallback for non-JWT requests if necessary
+	// Accept user_id or user_uuid in body/query, but always resolve to numeric user_id
 	const payload = { ...req.query, ...req.body };
-	const raw = payload.user_id ?? payload.user_uuid ?? null;
+	let raw = payload.user_id ?? payload.user_uuid ?? null;
 	if (!raw) return null;
-	const asInt = parseInt(raw, 10);
-	if (!isNaN(asInt) && String(asInt) === String(raw)) return asInt;
-	// lookup uuid
-	const [rows] = await db.promise().query("SELECT user_id FROM users WHERE user_uuid = ? LIMIT 1", [raw]);
+	if (/^\d+$/.test(raw)) return parseInt(raw, 10);
+	// If raw is UUID, look up user_id
+	const { rows } = await pool.query(
+		"SELECT user_id FROM users WHERE user_id = $1 LIMIT 1",
+		[raw]
+	);
 	return rows[0]?.user_id ?? null;
 }
 
-/* helper: format input to MySQL DATETIME (YYYY-MM-DD HH:MM:SS) */
-function toMySQLDateTime(input) {
+/* helper: format input to SQL timestamp (YYYY-MM-DD HH:MM:SS) */
+function toSQLDateTime(input) {
 	if (!input) return null;
 	const d = new Date(input);
 	if (!isNaN(d.getTime())) {
@@ -57,9 +64,12 @@ function toMySQLDateTime(input) {
 export const createEntry = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
-        const {
+		const {
 			title_encrypted = null,
 			content_encrypted,
 			mood = "neutral",
@@ -69,19 +79,30 @@ export const createEntry = async (req, res) => {
 			emotion_score = null,
 		} = req.body;
 
-		if (!content_encrypted) return res.status(400).json({ message: "content_encrypted required" });
+		if (!content_encrypted)
+			return res.status(400).json({ message: "content_encrypted required" });
 
-		const entryDateTime = toMySQLDateTime(entry_date) ?? new Date().toISOString().replace("T", " ").slice(0, 19);
+		const entryDateTime =
+			toSQLDateTime(entry_date) ??
+			new Date().toISOString().replace("T", " ").slice(0, 19);
 
-		const [result] = await db
-			.promise()
-			.query(
-				`INSERT INTO DiaryEntries (user_id, title_encrypted, content_encrypted, mood, tags_encrypted, visibility, entry_date, emotion_score)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				[user_id, title_encrypted, content_encrypted, mood, tags_encrypted, visibility, entryDateTime, emotion_score]
-			);
+		const insertSql = `INSERT INTO DiaryEntries (user_id, title_encrypted, content_encrypted, mood, tags_encrypted, visibility, entry_date, emotion_score)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING entry_id`;
+		const values = [
+			user_id,
+			title_encrypted,
+			content_encrypted,
+			mood,
+			tags_encrypted,
+			visibility,
+			entryDateTime,
+			emotion_score,
+		];
+		const { rows } = await pool.query(insertSql, values);
 
-		return res.status(201).json({ entry_id: result.insertId, message: "Entry created" });
+		return res
+			.status(201)
+			.json({ entry_id: rows[0]?.entry_id ?? null, message: "Entry created" });
 	} catch (err) {
 		console.error("❌ createEntry:", err);
 		return res.status(500).json({ message: "Internal Server Error" });
@@ -95,18 +116,25 @@ export const createEntry = async (req, res) => {
 export const getEntries = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		console.log("data", user_id);
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
-		let sql = "SELECT * FROM DiaryEntries WHERE user_id = ?";
+		console.log("data", req.body);
+
+		let sql = "SELECT * FROM DiaryEntries WHERE user_id = $1";
 		const vals = [user_id];
+		let idx = 2;
 
 		if (req.query.visibility) {
-			sql += " AND visibility = ?";
+			sql += ` AND visibility = $${idx++}`;
 			vals.push(req.query.visibility);
 		}
 		if (req.query.entry_date) {
 			// match date part
-			sql += " AND DATE(entry_date) = ?";
+			sql += ` AND DATE(entry_date) = $${idx++}`;
 			vals.push(req.query.entry_date);
 		}
 
@@ -115,10 +143,10 @@ export const getEntries = async (req, res) => {
 		// paging
 		const limit = parseInt(req.query.limit, 10) || 100;
 		const offset = parseInt(req.query.offset, 10) || 0;
-		sql += " LIMIT ? OFFSET ?";
+		sql += ` LIMIT $${idx++} OFFSET $${idx++}`;
 		vals.push(limit, offset);
 
-		const [rows] = await db.promise().query(sql, vals);
+		const { rows } = await pool.query(sql, vals);
 		return res.json({ entries: rows });
 	} catch (err) {
 		console.error("❌ getEntries:", err);
@@ -127,13 +155,28 @@ export const getEntries = async (req, res) => {
 };
 
 /* GET /api/diary/:entry_id */
+// Fix getEntryById to accept both UUID and integer entry_id
 export const getEntryById = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
 		const entryId = req.params.entry_id;
-		const [rows] = await db.promise().query("SELECT * FROM DiaryEntries WHERE entry_id = ? AND user_id = ? LIMIT 1", [entryId, user_id]);
+		// Check if entryId is integer or UUID
+		let sql, params;
+		if (/^\d+$/.test(entryId)) {
+			// Numeric entry_id
+			sql = "SELECT * FROM DiaryEntries WHERE entry_id = $1 AND user_id = $2 LIMIT 1";
+			params = [parseInt(entryId, 10), user_id];
+		} else {
+			// UUID entry_id
+			sql = "SELECT * FROM DiaryEntries WHERE entry_uuid = $1 AND user_id = $2 LIMIT 1";
+			params = [entryId, user_id];
+		}
+		const { rows } = await pool.query(sql, params);
 		const entry = rows[0];
 		if (!entry) return res.status(404).json({ message: "Entry not found" });
 		return res.json({ entry });
@@ -149,30 +192,58 @@ export const getEntryById = async (req, res) => {
 export const updateEntry = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
 		const entryId = req.params.entry_id;
 
 		// ensure entry belongs to user
-		const [check] = await db.promise().query("SELECT * FROM DiaryEntries WHERE entry_id = ? AND user_id = ? LIMIT 1", [entryId, user_id]);
-		if (!check[0]) return res.status(404).json({ message: "Entry not found" });
+		const { rows: checkRows } = await pool.query(
+			"SELECT * FROM DiaryEntries WHERE entry_id = $1 AND user_id = $2 LIMIT 1",
+			[entryId, user_id]
+		);
+		if (!checkRows[0])
+			return res.status(404).json({ message: "Entry not found" });
 
-		const allowed = ["title_encrypted", "content_encrypted", "mood", "tags_encrypted", "visibility", "entry_date", "emotion_score"];
+		const allowed = [
+			"title_encrypted",
+			"content_encrypted",
+			"mood",
+			"tags_encrypted",
+			"visibility",
+			"entry_date",
+			"emotion_score",
+		];
 		const updates = [];
 		const vals = [];
+		let idx = 1;
 
 		for (const key of allowed) {
 			if (req.body[key] !== undefined) {
-				if (key === "entry_date") vals.push(toMySQLDateTime(req.body[key])); else vals.push(req.body[key]);
-				updates.push(`${key} = ?`);
+				if (key === "entry_date") {
+					updates.push(`${key} = $${idx++}`);
+					vals.push(toSQLDateTime(req.body[key]));
+				} else {
+					updates.push(`${key} = $${idx++}`);
+					vals.push(req.body[key]);
+				}
 			}
 		}
-		if (updates.length === 0) return res.status(400).json({ message: "No fields to update" });
+		if (updates.length === 0)
+			return res.status(400).json({ message: "No fields to update" });
 
+		// push entryId as last param
 		vals.push(entryId);
-		const sql = `UPDATE DiaryEntries SET ${updates.join(", ")} WHERE entry_id = ?`;
-		const [result] = await db.promise().query(sql, vals);
-		return res.json({ message: "Entry updated", affectedRows: result.affectedRows });
+		const sql = `UPDATE DiaryEntries SET ${updates.join(
+			", "
+		)} WHERE entry_id = $${idx}`;
+		const result = await pool.query(sql, vals);
+		return res.json({
+			message: "Entry updated",
+			affectedRows: result.rowCount,
+		});
 	} catch (err) {
 		console.error("❌ updateEntry:", err);
 		return res.status(500).json({ message: "Internal Server Error" });
@@ -183,14 +254,24 @@ export const updateEntry = async (req, res) => {
 export const deleteEntry = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
 		const entryId = req.params.entry_id;
 		// ensure belongs to user
-		const [check] = await db.promise().query("SELECT * FROM DiaryEntries WHERE entry_id = ? AND user_id = ? LIMIT 1", [entryId, user_id]);
-		if (!check[0]) return res.status(404).json({ message: "Entry not found" });
+		const { rows: checkRows } = await pool.query(
+			"SELECT * FROM DiaryEntries WHERE entry_id = $1 AND user_id = $2 LIMIT 1",
+			[entryId, user_id]
+		);
+		if (!checkRows[0])
+			return res.status(404).json({ message: "Entry not found" });
 
-		await db.promise().query("DELETE FROM DiaryEntries WHERE entry_id = ? AND user_id = ?", [entryId, user_id]);
+		await pool.query(
+			"DELETE FROM DiaryEntries WHERE entry_id = $1 AND user_id = $2",
+			[entryId, user_id]
+		);
 		return res.json({ message: "Entry deleted" });
 	} catch (err) {
 		console.error("❌ deleteEntry:", err);
@@ -204,22 +285,27 @@ export const deleteEntry = async (req, res) => {
 export const getMoodStats = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
-		let sql = "SELECT mood, COUNT(*) AS count FROM DiaryEntries WHERE user_id = ?";
+		let sql =
+			"SELECT mood, COUNT(*) AS count FROM DiaryEntries WHERE user_id = $1";
 		const vals = [user_id];
+		let idx = 2;
 
 		if (req.query.since) {
-			sql += " AND entry_date >= ?";
-			vals.push(toMySQLDateTime(req.query.since));
+			sql += ` AND entry_date >= $${idx++}`;
+			vals.push(toSQLDateTime(req.query.since));
 		}
 		if (req.query.until) {
-			sql += " AND entry_date <= ?";
-			vals.push(toMySQLDateTime(req.query.until));
+			sql += ` AND entry_date <= $${idx++}`;
+			vals.push(toSQLDateTime(req.query.until));
 		}
 
 		sql += " GROUP BY mood";
-		const [rows] = await db.promise().query(sql, vals);
+		const { rows } = await pool.query(sql, vals);
 		return res.json({ stats: rows });
 	} catch (err) {
 		console.error("❌ getMoodStats:", err);
@@ -231,10 +317,16 @@ export const getMoodStats = async (req, res) => {
 export const getEntriesByDate = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
 		const date = req.params.date;
-		const [rows] = await db.promise().query("SELECT * FROM DiaryEntries WHERE user_id = ? AND DATE(entry_date) = ? ORDER BY entry_date DESC", [user_id, date]);
+		const { rows } = await pool.query(
+			"SELECT * FROM DiaryEntries WHERE user_id = $1 AND DATE(entry_date) = $2 ORDER BY entry_date DESC",
+			[user_id, date]
+		);
 		return res.json({ entries: rows });
 	} catch (err) {
 		console.error("❌ getEntriesByDate:", err);
@@ -250,17 +342,24 @@ export const getEntriesByDate = async (req, res) => {
 export const getEntriesByTag = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
 		const tag = req.params.tag;
-		// if client provided an encrypted tag value (base64), match it
-		// otherwise return message that server cannot search encrypted tags
 		const isLikelyEncrypted = typeof tag === "string" && tag.length > 50; // heuristic
 		if (!isLikelyEncrypted) {
-			return res.status(400).json({ message: "Server cannot search plaintext tags. Provide encrypted tag value or perform client-side filtering after fetching entries." });
+			return res.status(400).json({
+				message:
+					"Server cannot search plaintext tags. Provide encrypted tag value or perform client-side filtering after fetching entries.",
+			});
 		}
 
-		const [rows] = await db.promise().query("SELECT * FROM DiaryEntries WHERE user_id = ? AND tags_encrypted = ? ORDER BY entry_date DESC", [user_id, tag]);
+		const { rows } = await pool.query(
+			"SELECT * FROM DiaryEntries WHERE user_id = $1 AND tags_encrypted = $2 ORDER BY entry_date DESC",
+			[user_id, tag]
+		);
 		return res.json({ entries: rows });
 	} catch (err) {
 		console.error("❌ getEntriesByTag:", err);
@@ -275,21 +374,27 @@ export const getEntriesByTag = async (req, res) => {
 export const searchEntries = async (req, res) => {
 	try {
 		const user_id = await resolveUserIdFromReq(req);
-		if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
 		const q = req.query.q ?? "";
-		// return entries (optionally you can limit to date range or visibility)
-		let sql = "SELECT * FROM DiaryEntries WHERE user_id = ?";
+		let sql = "SELECT * FROM DiaryEntries WHERE user_id = $1";
 		const vals = [user_id];
+		let idx = 2;
 
-		// optional: filter by mood or date if provided
 		if (req.query.mood) {
-			sql += " AND mood = ?";
+			sql += ` AND mood = $${idx++}`;
 			vals.push(req.query.mood);
 		}
 		sql += " ORDER BY entry_date DESC LIMIT 500";
-		const [rows] = await db.promise().query(sql, vals);
-		return res.json({ message: "Server cannot search encrypted content. Returned candidate entries. Client must decrypt and filter locally.", entries: rows });
+		const { rows } = await pool.query(sql, vals);
+		return res.json({
+			message:
+				"Server cannot search encrypted content. Returned candidate entries. Client must decrypt and filter locally.",
+			entries: rows,
+		});
 	} catch (err) {
 		console.error("❌ searchEntries:", err);
 		return res.status(500).json({ message: "Internal Server Error" });
@@ -300,32 +405,33 @@ export const searchEntries = async (req, res) => {
    Returns array of dates (YYYY-MM-DD) for which the user has no diary entry in the past 3 days (excluding today)
 */
 export const getMissingDiaryDates = async (req, res) => {
-    try {
-		
-        const user_id = await resolveUserIdFromReq(req);
-        if (!user_id) return res.status(401).json({ message: "Unauthorized or user not found" });
+	try {
+		const user_id = await resolveUserIdFromReq(req);
+		if (!user_id)
+			return res
+				.status(401)
+				.json({ message: "Unauthorized or user not found" });
 
-        // Get past 3 days (excluding today)
-        const dates = [];
-        for (let i = 1; i <= 3; i++) {
-            const d = new Date();
-            d.setDate(d.getDate() - i);
-            dates.push(d.toISOString().slice(0, 10)); // "YYYY-MM-DD"
-        }
+		// Get past 3 days (excluding today)
+		const dates = [];
+		for (let i = 1; i <= 3; i++) {
+			const d = new Date();
+			d.setDate(d.getDate() - i);
+			dates.push(d.toISOString().slice(0, 10)); // "YYYY-MM-DD"
+		}
 
-        // Query for existing entries for those dates
-        const [rows] = await db.promise().query(
-            `SELECT DATE(entry_date) as entry_date FROM DiaryEntries WHERE user_id = ? AND DATE(entry_date) IN (?, ?, ?)`,
-            [user_id, ...dates]
-        );
-        const writtenDates = new Set(rows.map(r => r.entry_date));
+		// Query for existing entries for those dates
+		const placeholders = dates.map((_, i) => `$${i + 2}`).join(", ");
+		const sql = `SELECT DATE(entry_date) as entry_date FROM DiaryEntries WHERE user_id = $1 AND DATE(entry_date) IN (${placeholders})`;
+		const { rows } = await pool.query(sql, [user_id, ...dates]);
+		const writtenDates = new Set(rows.map((r) => r.entry_date));
 
-        // Filter out dates that already have an entry
-        const missingDates = dates.filter(d => !writtenDates.has(d));
+		// Filter out dates that already have an entry
+		const missingDates = dates.filter((d) => !writtenDates.has(d));
 
-        return res.json({ missing: missingDates });
-    } catch (err) {
-        console.error("❌ getMissingDiaryDates:", err);
-        return res.status(500).json({ message: "Internal Server Error" });
-    }
+		return res.json({ missing: missingDates });
+	} catch (err) {
+		console.error("❌ getMissingDiaryDates:", err);
+		return res.status(500).json({ message: "Internal Server Error" });
+	}
 };

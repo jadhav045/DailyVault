@@ -26,7 +26,7 @@ export const getCurrentUser = () => {
         const email = claims.email ?? claims.user?.email ?? null;
 
         // helpful debug info
-        console.log("Parsed JWT claims:", claims, "-> id:", id, "email:", email);
+        // console.log("Parsed JWT claims:", claims, "-> id:", id, "email:", email);
 
         // return available info (don't require both). Upstream components can handle missing fields.
         if (!id && !email) return null;

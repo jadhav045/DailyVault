@@ -1,369 +1,541 @@
-import db from "../config/db.config.js";
+import pool from "../config/db.config.js"; // Use the PostgreSQL pool
+import jwt from "jsonwebtoken";
 
-/*
-  Task/Category/Subtask controller
-  - Exports: category and task/subtask CRUD handlers
-  - Attempts to write to ActivityLog for each change (if table exists)
+/* Helper: get user_id (UUID) from the request's JWT.
+  This is simplified as our primary key for Users is now the UUID.
 */
-
-async function resolveUserIdFromPayload(payload) {
-	// payload may have user_id (int/string) or user_uuid (uuid)
-	if (!payload) return null;
-	const raw = payload.user_id ?? payload.user_uuid ?? null;
-	if (!raw) return null;
-
-	const asInt = parseInt(raw, 10);
-	if (!isNaN(asInt) && String(asInt) === String(raw)) return asInt;
-
-	// lookup numeric id by uuid
-	const [rows] = await db.promise().query("SELECT user_id FROM users WHERE user_uuid = ? LIMIT 1", [raw]);
-	return rows[0]?.user_id ?? null;
+async function getUserIdFromJwt(req) {
+  const authHeader = req.headers?.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      return payload?.id ?? payload?.user_id ?? null;
+    } catch (e) {
+      console.warn("Could not verify JWT:", e.message);
+      return null; // Token is invalid or expired
+    }
+  }
+  // Fallback for non-JWT requests if necessary
+  return req.body.user_id ?? req.query.user_id ?? null;
 }
 
-async function logActivity(user_id, action, entity, entity_id = null, details = null) {
-	try {
-		// Try to insert into ActivityLog table if it exists
-		await db.promise().query(
-			"INSERT INTO ActivityLog (user_id, action, entity, entity_id, details) VALUES (?, ?, ?, ?, ?)",
-			[user_id, action, entity, entity_id, details ? JSON.stringify(details) : null]
-		);
-	} catch (err) {
-		// If table doesn't exist or other error, warn and continue
-		console.warn("ActivityLog insert skipped or failed:", err.code || err.message);
-	}
+/* Helper: Log an activity to the ActivityLog table.
+ */
+async function logActivity(user_id, action_type, details = null) {
+  // Ensure user_id is provided
+  if (!user_id) {
+    console.warn("ActivityLog skipped: user_id was not provided.");
+    return;
+  }
+  try {
+    const sql = `
+            INSERT INTO ActivityLog (user_id, action_type, diary_id, task_id) 
+            VALUES ($1, $2, $3, $4)`;
+
+    // Assumes details object might contain diary_id or task_id
+    await pool.query(sql, [
+      user_id,
+      action_type,
+      details?.diary_id ?? null,
+      details?.task_id ?? null,
+    ]);
+  } catch (err) {
+    // Fail silently if the log table doesn't exist or if there's an error
+    console.warn("ActivityLog insert failed:", err.message);
+  }
 }
 
-// helper: normalize incoming date (string or Date) to MySQL DATETIME "YYYY-MM-DD HH:MM:SS"
-function toMySQLDateTime(input) {
-	// if not provided, return null (DB can use NULL)
-	if (!input) return null;
-	const d = new Date(input);
-	if (isNaN(d.getTime())) {
-		// try simple replacement if input is "YYYY-MM-DDTHH:MM" (from datetime-local)
-		if (typeof input === "string" && input.includes("T")) {
-			// ensure seconds
-			const withSpace = input.replace("T", " ");
-			return withSpace.length === 16 ? withSpace + ":00" : withSpace;
-		}
-		// fallback: return input as-is and let DB handle or error
-		return input;
-	}
-	const iso = d.toISOString().replace("T", " ").slice(0, 19);
-	return iso;
-}
-
-/* ---------------------------
-   Categories
-   --------------------------- */
+// =================================================================
+// Categories
+// =================================================================
 
 export const createCategory = async (req, res) => {
-	try {
-		const { name, color = "#6B7280", icon = null } = req.body;
-		const user_id = await resolveUserIdFromPayload(req.body);
-		if (!user_id || !name) return res.status(400).json({ message: "user_id and name required" });
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		const [result] = await db.promise().query(
-			"INSERT INTO Categories (user_id, name, color, icon) VALUES (?, ?, ?, ?)",
-			[user_id, name, color, icon]
-		);
+    console.log(req.body);
+    const { category_name, color_code = "#FFFFFF" } = req.body;
+    // const category_name = na
+    // me;
+    if (!category_name)
+      return res.status(400).json({ message: "category_name is required" });
 
-		await logActivity(user_id, "create_category", "category", result.insertId, { name, color, icon });
+    const sql = `
+            INSERT INTO Categories (user_id, category_name, color_code) 
+            VALUES ($1, $2, $3) 
+            RETURNING category_id`;
 
-		return res.status(201).json({ category_id: result.insertId, message: "Category created" });
-	} catch (err) {
-		console.error("❌ createCategory:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    const { rows } = await pool.query(sql, [
+      user_id,
+      category_name,
+      color_code,
+    ]);
+    const newCategoryId = rows[0].category_id;
+
+    await logActivity(user_id, "create", { task_id: newCategoryId });
+
+    return res
+      .status(201)
+      .json({ category_id: newCategoryId, message: "Category created" });
+  } catch (err) {
+    console.error("❌ createCategory:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const getCategories = async (req, res) => {
-	try {
-		const user_id = await resolveUserIdFromPayload(req.query || req.body);
-		if (!user_id) return res.status(400).json({ message: "user_id required" });
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		const [rows] = await db.promise().query("SELECT * FROM Categories WHERE user_id = ? ORDER BY name", [user_id]);
-		return res.json({ categories: rows });
-	} catch (err) {
-		console.error("❌ getCategories:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    const { rows } = await pool.query(
+      "SELECT * FROM Categories WHERE user_id = $1 ORDER BY category_name",
+      [user_id]
+    );
+    return res.json({ categories: rows });
+  } catch (err) {
+    console.error("❌ getCategories:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const updateCategory = async (req, res) => {
-	try {
-		const id = req.params.id;
-		const { name, color, icon } = req.body;
-		const updates = [];
-		const vals = [];
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		if (name !== undefined) { updates.push("name = ?"); vals.push(name); }
-		if (color !== undefined) { updates.push("color = ?"); vals.push(color); }
-		if (icon !== undefined) { updates.push("icon = ?"); vals.push(icon); }
+    const category_id = req.params.id;
+    const { category_name, color_code } = req.body;
 
-		if (updates.length === 0) return res.status(400).json({ message: "No fields to update" });
+    const updates = [];
+    const vals = [];
+    let paramIndex = 1;
 
-		vals.push(id);
-		const sql = `UPDATE Categories SET ${updates.join(", ")} WHERE category_id = ?`;
-		const [result] = await db.promise().query(sql, vals);
+    if (category_name !== undefined) {
+      updates.push(`category_name = $${paramIndex++}`);
+      vals.push(category_name);
+    }
+    if (color_code !== undefined) {
+      updates.push(`color_code = $${paramIndex++}`);
+      vals.push(color_code);
+    }
 
-		// activity log (try resolve user from category)
-		try {
-			const [r] = await db.promise().query("SELECT user_id FROM Categories WHERE category_id = ? LIMIT 1", [id]);
-			const user_id = r[0]?.user_id ?? null;
-			if (user_id) await logActivity(user_id, "update_category", "category", id, { name, color, icon });
-		} catch (e) {
-			// ignore
-		}
+    if (updates.length === 0)
+      return res.status(400).json({ message: "No fields to update" });
 
-		return res.json({ message: "Category updated", affectedRows: result.affectedRows });
-	} catch (err) {
-		console.error("❌ updateCategory:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    vals.push(user_id, category_id); // Add user_id and category_id for the WHERE clause
+    const sql = `
+            UPDATE Categories SET ${updates.join(", ")} 
+            WHERE user_id = $${paramIndex++} AND category_id = $${paramIndex++}`;
+
+    const { rowCount } = await pool.query(sql, vals);
+    if (rowCount === 0)
+      return res.status(404).json({
+        message: "Category not found or you do not have permission to edit it.",
+      });
+
+    await logActivity(user_id, "update", { task_id: category_id });
+
+    return res.json({ message: "Category updated", affectedRows: rowCount });
+  } catch (err) {
+    console.error("❌ updateCategory:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const deleteCategory = async (req, res) => {
-	try {
-		const id = req.params.id;
-		// fetch user_id for activity
-		const [rows] = await db.promise().query("SELECT user_id, name FROM Categories WHERE category_id = ? LIMIT 1", [id]);
-		const cat = rows[0];
-		if (!cat) return res.status(404).json({ message: "Category not found" });
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		const [result] = await db.promise().query("DELETE FROM Categories WHERE category_id = ?", [id]);
+    const category_id = req.params.id;
+    const { rowCount } = await pool.query(
+      "DELETE FROM Categories WHERE category_id = $1 AND user_id = $2",
+      [category_id, user_id]
+    );
 
-		await logActivity(cat.user_id, "delete_category", "category", id, { name: cat.name });
+    if (rowCount === 0)
+      return res.status(404).json({
+        message:
+          "Category not found or you do not have permission to delete it.",
+      });
 
-		return res.json({ message: "Category deleted" });
-	} catch (err) {
-		console.error("❌ deleteCategory:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    await logActivity(user_id, "delete", { task_id: category_id });
+
+    return res.json({ message: "Category deleted" });
+  } catch (err) {
+    console.error("❌ deleteCategory:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
-/* ---------------------------
-   Tasks
-   --------------------------- */
+// =================================================================
+// Tasks
+// =================================================================
 
 export const createTask = async (req, res) => {
-	try {
-		const {
-			category_id = null,
-			title_encrypted,
-			description_encrypted = null,
-			priority = "Medium",
-			due_date = null,
-			status = "Pending",
-		} = req.body;
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		const user_id = await resolveUserIdFromPayload(req.body);
-		if (!user_id || !title_encrypted) return res.status(400).json({ message: "user_id and title_encrypted required" });
+    const {
+      category_id = null,
+      priority_name = "Medium",
+      due_date = null,
+      status = "pending",
+    } = req.body;
 
-		const due = toMySQLDateTime(due_date);
-		const [result] = await db.promise().query(
-			`INSERT INTO Tasks (user_id, category_id, title_encrypted, description_encrypted, priority, due_date, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			[user_id, category_id, title_encrypted, description_encrypted, priority, due, status]
-		);
+    // Fix encrypted field names
+    const title_enc = req.body.title_encrypted || req.body.title_enc;
+    const description_enc =
+      req.body.description_encrypted || req.body.description_enc;
 
-		await logActivity(user_id, "create_task", "task", result.insertId, { category_id, priority, due_date });
+    if (!title_enc)
+      return res.status(400).json({ message: "title_enc is required" });
 
-		return res.status(201).json({ task_id: result.insertId, message: "Task created" });
-	} catch (err) {
-		console.error("❌ createTask:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    const sql = `
+            INSERT INTO Tasks (user_id, category_id, title_enc, description_enc, priority_name, due_date, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING task_id`;
+
+    const values = [
+      user_id,
+      category_id,
+      title_enc,
+      description_enc,
+      priority_name,
+      due_date,
+      status,
+    ];
+    const { rows } = await pool.query(sql, values);
+    const newTaskId = rows[0].task_id;
+
+    await logActivity(user_id, "create", { task_id: newTaskId });
+
+    return res
+      .status(201)
+      .json({ task_id: newTaskId, message: "Task created" });
+  } catch (err) {
+    console.error("❌ createTask:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const getTasks = async (req, res) => {
-	try {
-		const payload = (req.query && Object.keys(req.query).length) ? req.query : req.body;
-		const user_id = await resolveUserIdFromPayload(payload);
-		if (!user_id) return res.status(400).json({ message: "user_id required" });
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		let sql = "SELECT * FROM Tasks WHERE user_id = ?";
-		const vals = [user_id];
+    // console.log(user_id);
+    let sql = "SELECT * FROM Tasks WHERE user_id = $1";
+    const vals = [user_id];
+    let paramIndex = 2;
 
-		if (req.query.status) { sql += " AND status = ?"; vals.push(req.query.status); }
-		if (req.query.category) { sql += " AND category_id = ?"; vals.push(req.query.category); }
-		if (req.query.priority) { sql += " AND priority = ?"; vals.push(req.query.priority); }
-		if (req.query.search) { sql += " AND title_encrypted LIKE ?"; vals.push(`%${req.query.search}%`); }
+    if (req.query.status) {
+      sql += ` AND status = $${paramIndex++}`;
+      vals.push(req.query.status);
+    }
+    if (req.query.category) {
+      sql += ` AND category_id = $${paramIndex++}`;
+      vals.push(req.query.category);
+    }
+    if (req.query.priority) {
+      sql += ` AND priority_name = $${paramIndex++}`;
+      vals.push(req.query.priority);
+    }
 
-		if (req.query.sort === "due_date") sql += " ORDER BY due_date ASC";
-		else if (req.query.sort === "created_at") sql += " ORDER BY created_at DESC";
-		else sql += " ORDER BY created_at DESC";
+    // NOTE: Server-side search on encrypted text ('title_enc') is not feasible.
+    // This search logic should be handled on the client-side after decryption.
 
-		const [rows] = await db.promise().query(sql, vals);
-		return res.json({ tasks: rows });
-	} catch (err) {
-		console.error("❌ getTasks:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    if (req.query.sort === "due_date")
+      sql += " ORDER BY due_date ASC NULLS LAST";
+    else sql += " ORDER BY created_at DESC";
+
+    const { rows } = await pool.query(sql, vals);
+
+    // console.log("ROWS", rows[0]);
+    return res.json({ tasks: rows });
+  } catch (err) {
+    console.error("❌ getTasks:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const getTaskById = async (req, res) => {
-	try {
-		const id = req.params.id;
-		const [rows] = await db.promise().query("SELECT * FROM Tasks WHERE task_id = ? LIMIT 1", [id]);
-		const t = rows[0];
-		if (!t) return res.status(404).json({ message: "Task not found" });
-		return res.json({ task: t });
-	} catch (err) {
-		console.error("❌ getTaskById:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+  try {
+    console.log(req.body);
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
+
+    const task_id = req.params.id;
+    const { rows } = await pool.query(
+      "SELECT * FROM Tasks WHERE task_id = $1 AND user_id = $2",
+      [task_id, user_id]
+    );
+
+    const task = rows[0];
+    if (!task) return res.status(404).json({ message: "Task not found" });
+    return res.json({ task });
+  } catch (err) {
+    console.error("❌ getTaskById:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const updateTask = async (req, res) => {
-	try {
-		const id = req.params.id;
-		const allowed = ["title_encrypted", "description_encrypted", "priority", "due_date", "category_id", "status"];
-		const updates = [];
-		const vals = [];
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		for (const key of allowed) {
-			if (req.body[key] !== undefined) {
-				updates.push(`${key} = ?`);
-				// convert due_date to DATETIME if present
-				if (key === "due_date") vals.push(toMySQLDateTime(req.body[key]));
-				else vals.push(req.body[key]);
-			}
-		}
+    const task_id = req.params.id;
+    // Update allowed fields array to match schema
+    const allowed = [
+      "title_enc",
+      "description_enc",
+      "priority_name",
+      "due_date",
+      "category_id",
+      "status",
+    ];
 
-		if (updates.length === 0) return res.status(400).json({ message: "No fields provided" });
+    // Handle encrypted field conversion if needed
+    const updates = [];
+    const vals = [];
+    let paramIndex = 1;
 
-		vals.push(id);
-		const sql = `UPDATE Tasks SET ${updates.join(", ")} WHERE task_id = ?`;
-		const [result] = await db.promise().query(sql, vals);
+    for (const key of allowed) {
+      let value = req.body[key];
+      // Convert any _encrypted fields to _enc
+      if (key === "title_enc" && req.body.title_encrypted) {
+        value = req.body.title_encrypted;
+      }
+      if (key === "description_enc" && req.body.description_encrypted) {
+        value = req.body.description_encrypted;
+      }
+      if (value !== undefined) {
+        updates.push(`${key} = $${paramIndex++}`);
+        vals.push(value);
+      }
+    }
 
-		// log activity with user_id fetched from task
-		try {
-			const [r] = await db.promise().query("SELECT user_id FROM Tasks WHERE task_id = ? LIMIT 1", [id]);
-			const user_id = r[0]?.user_id ?? null;
-			if (user_id) await logActivity(user_id, "update_task", "task", id, req.body);
-		} catch (e) {}
+    if (updates.length === 0)
+      return res.status(400).json({ message: "No fields to update" });
 
-		return res.json({ message: "Task updated", affectedRows: result.affectedRows });
-	} catch (err) {
-		console.error("❌ updateTask:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
-};
+    vals.push(user_id, task_id);
+    const sql = `
+            UPDATE Tasks SET ${updates.join(", ")} 
+            WHERE user_id = $${paramIndex++} AND task_id = $${paramIndex++}`;
 
-export const patchTaskStatus = async (req, res) => {
-	try {
-		const id = req.params.id;
-		const { status } = req.body;
-		if (!["Pending", "Completed"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const { rowCount } = await pool.query(sql, vals);
+    if (rowCount === 0)
+      return res.status(404).json({
+        message: "Task not found or you do not have permission to edit it.",
+      });
 
-		const [result] = await db.promise().query("UPDATE Tasks SET status = ? WHERE task_id = ?", [status, id]);
-
-		// log
-		try {
-			const [r] = await db.promise().query("SELECT user_id FROM Tasks WHERE task_id = ? LIMIT 1", [id]);
-			const user_id = r[0]?.user_id ?? null;
-			if (user_id) await logActivity(user_id, "patch_task_status", "task", id, { status });
-		} catch (e) {}
-
-		return res.json({ message: "Status updated", affectedRows: result.affectedRows });
-	} catch (err) {
-		console.error("❌ patchTaskStatus:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    await logActivity(user_id, "update", { task_id });
+    return res.json({ message: "Task updated", affectedRows: rowCount });
+  } catch (err) {
+    console.error("❌ updateTask:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const deleteTask = async (req, res) => {
-	try {
-		const id = req.params.id;
-		const [rows] = await db.promise().query("SELECT user_id, title_encrypted FROM Tasks WHERE task_id = ? LIMIT 1", [id]);
-		const t = rows[0];
-		if (!t) return res.status(404).json({ message: "Task not found" });
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		const [result] = await db.promise().query("DELETE FROM Tasks WHERE task_id = ?", [id]);
+    const task_id = req.params.id;
+    const { rowCount } = await pool.query(
+      "DELETE FROM Tasks WHERE task_id = $1 AND user_id = $2",
+      [task_id, user_id]
+    );
 
-		await logActivity(t.user_id, "delete_task", "task", id, { title_encrypted: t.title_encrypted });
+    if (rowCount === 0)
+      return res.status(404).json({
+        message: "Task not found or you do not have permission to delete it.",
+      });
 
-		return res.json({ message: "Task deleted" });
-	} catch (err) {
-		console.error("❌ deleteTask:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    await logActivity(user_id, "delete", { task_id });
+    return res.json({ message: "Task deleted" });
+  } catch (err) {
+    console.error("❌ deleteTask:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
-/* ---------------------------
-   Subtasks
-   --------------------------- */
+// =================================================================
+// Subtasks
+// =================================================================
 
 export const createSubtask = async (req, res) => {
-	try {
-		const { task_id, title_encrypted } = req.body;
-		if (!task_id || !title_encrypted) return res.status(400).json({ message: "task_id and title_encrypted required" });
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
+    console.log("ss");
+    // Fix encrypted field name
+    const task_id = req.body.task_id;
+    const title_enc = req.body.title_encrypted || req.body.title_enc;
 
-		const [result] = await db.promise().query("INSERT INTO Subtasks (task_id, title_encrypted) VALUES (?, ?)", [task_id, title_encrypted]);
+    if (!task_id || !title_enc)
+      return res
+        .status(400)
+        .json({ message: "task_id and title_enc are required" });
 
-		// log activity (resolve user_id from task)
-		try {
-			const [r] = await db.promise().query("SELECT user_id FROM Tasks WHERE task_id = ? LIMIT 1", [task_id]);
-			const user_id = r[0]?.user_id ?? null;
-			if (user_id) await logActivity(user_id, "create_subtask", "subtask", result.insertId, { task_id });
-		} catch (e) {}
+    // Security Check: Ensure the parent task belongs to the user
+    const { rows: taskCheck } = await pool.query(
+      "SELECT task_id FROM Tasks WHERE task_id = $1 AND user_id = $2",
+      [task_id, user_id]
+    );
+    if (taskCheck.length === 0)
+      return res
+        .status(403)
+        .json({ message: "You do not own the parent task." });
 
-		return res.status(201).json({ subtask_id: result.insertId, message: "Subtask created" });
-	} catch (err) {
-		console.error("❌ createSubtask:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    const sql = `
+            INSERT INTO Subtasks (task_id, title_enc) 
+            VALUES ($1, $2) 
+            RETURNING subtask_id`;
+    const { rows } = await pool.query(sql, [task_id, title_enc]);
+
+    await logActivity(user_id, "create", { task_id: rows[0].subtask_id });
+    return res
+      .status(201)
+      .json({ subtask_id: rows[0].subtask_id, message: "Subtask created" });
+  } catch (err) {
+    console.error("❌ createSubtask:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const getSubtasksByTask = async (req, res) => {
-	try {
-		const taskId = req.params.taskId;
-		const [rows] = await db.promise().query("SELECT * FROM Subtasks WHERE task_id = ? ORDER BY created_at ASC", [taskId]);
-		return res.json({ subtasks: rows });
-	} catch (err) {
-		console.error("❌ getSubtasksByTask:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
+
+    const taskId = req.params.taskId;
+    // Security Check: Join with tasks to ensure user owns the parent task
+    const sql = `
+            SELECT s.* FROM Subtasks s
+            JOIN Tasks t ON s.task_id = t.task_id
+            WHERE s.task_id = $1 AND t.user_id = $2
+            ORDER BY s.created_at ASC`;
+
+    const { rows } = await pool.query(sql, [taskId, user_id]);
+    return res.json({ subtasks: rows });
+  } catch (err) {
+    console.error("❌ getSubtasksByTask:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const toggleSubtaskStatus = async (req, res) => {
-	try {
-		const id = req.params.id;
-		const { status } = req.body;
-		if (!["Pending", "Completed"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-		const [result] = await db.promise().query("UPDATE Subtasks SET status = ? WHERE subtask_id = ?", [status, id]);
+  try {
+    const { status } = req.body;
 
-		// log
-		try {
-			const [r] = await db.promise().query(
-				"SELECT t.user_id FROM Subtasks s JOIN Tasks t ON s.task_id = t.task_id WHERE s.subtask_id = ? LIMIT 1",
-				[id]
-			);
-			const user_id = r[0]?.user_id ?? null;
-			if (user_id) await logActivity(user_id, "toggle_subtask_status", "subtask", id, { status });
-		} catch (e) {}
+    if (!status) {
+      // If 'status' is missing, it sends a 400 error
+      return res.status(400).json({ message: "Status field is required." });
+    }
+    console.log("hh");
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		return res.json({ message: "Subtask status updated", affectedRows: result.affectedRows });
-	} catch (err) {
-		console.error("❌ toggleSubtaskStatus:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    const subtask_id = req.params.id;
+    // const { status } = req.body;
+    console.log("BPDY", req.body);
+    if (!["pending", "completed"].includes(status))
+      return res
+        .status(400)
+        .json({ message: "Invalid status, must be 'pending' or 'completed'" });
+
+    // Security Check: Join to ensure user owns the parent task
+    const sql = `
+            UPDATE Subtasks s SET status = $1
+            FROM Tasks t
+            WHERE s.subtask_id = $2 AND s.task_id = t.task_id AND t.user_id = $3`;
+
+    const { rowCount } = await pool.query(sql, [status, subtask_id, user_id]);
+    if (rowCount === 0)
+      return res.status(404).json({
+        message: "Subtask not found or you do not have permission to edit it.",
+      });
+
+    await logActivity(user_id, "update", { task_id: subtask_id });
+    return res.json({
+      message: "Subtask status updated",
+      affectedRows: rowCount,
+    });
+  } catch (err) {
+    console.error("❌ toggleSubtaskStatus:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };
 
 export const deleteSubtask = async (req, res) => {
-	try {
-		const id = req.params.id;
-		const [rows] = await db.promise().query("SELECT s.task_id, t.user_id FROM Subtasks s JOIN Tasks t ON s.task_id = t.task_id WHERE s.subtask_id = ? LIMIT 1", [id]);
-		const meta = rows[0];
-		if (!meta) return res.status(404).json({ message: "Subtask not found" });
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-		const [result] = await db.promise().query("DELETE FROM Subtasks WHERE subtask_id = ?", [id]);
+    const subtask_id = req.params.id;
 
-		await logActivity(meta.user_id, "delete_subtask", "subtask", id, { task_id: meta.task_id });
+    // Security Check: Join to ensure user owns the parent task before deleting
+    const sql = `
+            DELETE FROM Subtasks s
+            USING Tasks t
+            WHERE s.subtask_id = $1 AND s.task_id = t.task_id AND t.user_id = $2`;
 
-		return res.json({ message: "Subtask deleted" });
-	} catch (err) {
-		console.error("❌ deleteSubtask:", err);
-		return res.status(500).json({ message: "Internal Server Error" });
-	}
+    const { rowCount } = await pool.query(sql, [subtask_id, user_id]);
+    if (rowCount === 0)
+      return res.status(404).json({
+        message:
+          "Subtask not found or you do not have permission to delete it.",
+      });
+
+    await logActivity(user_id, "delete", { task_id: subtask_id });
+    return res.json({ message: "Subtask deleted" });
+  } catch (err) {
+    console.error("❌ deleteSubtask:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+export const patchTaskStatus = async (req, res) => {
+  try {
+    const user_id = await getUserIdFromJwt(req);
+    if (!user_id) return res.status(401).json({ message: "Unauthorized" });
+
+    const task_id = req.params.id;
+    let { status } = req.body;
+    if (!status) return res.status(400).json({ message: "Status is required" });
+
+    // Normalize status value (accept both "Pending"/"Completed" and "pending"/"completed")
+    status = status.toLowerCase();
+    if (status === "pending" || status === "completed") {
+      // ok
+    } else if (status === "Pending" || status === "Completed") {
+      status = status.toLowerCase();
+    } else {
+      return res.status(400).json({ message: "Invalid status value" });
+    }
+
+    const sql = `
+      UPDATE Tasks
+      SET status = $1
+      WHERE task_id = $2 AND user_id = $3
+      RETURNING *`;
+    const { rowCount } = await pool.query(sql, [status, task_id, user_id]);
+    if (rowCount === 0)
+      return res.status(404).json({
+        message: "Task not found or you do not have permission to update it.",
+      });
+
+    await logActivity(user_id, "update", { task_id });
+    return res.json({ message: "Task status updated" });
+  } catch (err) {
+    console.error("❌ patchTaskStatus:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 };

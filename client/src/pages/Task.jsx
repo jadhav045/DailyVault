@@ -3,19 +3,19 @@ import {
   Plus,
   CheckCircle2,
   Circle,
-  Edit2,
-  Trash2,
-  Calendar,
   Tag,
-  ChevronDown,
-  ChevronUp,
   Filter,
   X,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
-import api from "../api/axios";
 import { getCurrentUser } from "../utils/auth";
 import { encryptData, decryptData } from "../utils/crypto";
 import { toast } from "react-toastify";
+import TaskCard from "../components/TaskCard";
+import TaskForm from "../components/TaskForm";
+import * as taskService from "../services/task.service";
+import api from "../api/axios";
 
 function mysqlToDatetimeLocal(mysql) {
   if (!mysql) return "";
@@ -29,149 +29,32 @@ function datetimeLocalToMySQL(value) {
     : value.replace("T", " ");
 }
 
-// Memoized TaskCard for performance
-const TaskCard = React.memo(function TaskCard({
-  task,
-  category,
-  priorityStyle,
-  isExpanded,
-  onToggleStatus,
-  onExpand,
-  onEdit,
-  onDelete,
-  subtasks,
-  onToggleSubtask,
-  onDeleteSubtask,
-  subtaskInput,
-  onSubtaskInputChange,
-  onCreateSubtask,
-}) {
-  return (
-    <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-4 shadow border border-white/50 hover:shadow-xl transition-all">
-      <div className="flex items-start gap-3">
-        <button onClick={() => onToggleStatus(task)} className="mt-1">
-          {task.status === "Completed" ? (
-            <CheckCircle2 className="text-green-500" size={20} />
-          ) : (
-            <Circle className="text-gray-400" size={20} />
-          )}
-        </button>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <h3
-              className={`font-semibold text-gray-800 ${
-                task.status === "Completed" ? "line-through text-gray-500" : ""
-              }`}
-            >
-              {task.title}
-            </h3>
-            <span
-              className={`${priorityStyle.color} text-xs px-2 py-0.5 rounded-lg font-medium`}
-            >
-              {task.priority}
-            </span>
-            {category && (
-              <div className="flex items-center gap-1 text-xs bg-gray-100 px-2 py-0.5 rounded-lg">
-                <div
-                  style={{
-                    background: category.color,
-                    width: 12,
-                    height: 12,
-                  }}
-                  className="rounded-full"
-                />
-                <span>{category.name}</span>
-              </div>
-            )}
-          </div>
-          {task.description && (
-            <p className="text-sm text-gray-600 mb-2">{task.description}</p>
-          )}
-          {task.due_date && (
-            <div className="flex items-center gap-1 text-xs text-gray-500 mb-2">
-              <Calendar size={12} />
-              <span>Due: {new Date(task.due_date).toLocaleString()}</span>
-            </div>
-          )}
-          {/* Subtasks */}
-          {isExpanded && (
-            <div className="mt-3 space-y-2 border-t pt-3">
-              <p className="text-xs font-semibold text-gray-700 mb-2">
-                Subtasks
-              </p>
-              {subtasks.map((s) => (
-                <div
-                  key={s.subtask_id}
-                  className="flex items-center justify-between gap-2 bg-gray-50 px-3 py-2 rounded-lg"
-                >
-                  <div className="flex items-center gap-2 flex-1">
-                    <input
-                      type="checkbox"
-                      checked={s.status === "Completed"}
-                      onChange={() => onToggleSubtask(s)}
-                      className="w-4 h-4 text-purple-600 rounded"
-                    />
-                    <span
-                      className={`text-sm ${
-                        s.status === "Completed"
-                          ? "line-through text-gray-500"
-                          : ""
-                      }`}
-                    >
-                      {s.title}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => onDeleteSubtask(s.subtask_id, task.task_id)}
-                    className="text-red-500 hover:text-red-700"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-              <div className="flex gap-2 mt-2">
-                <input
-                  value={subtaskInput || ""}
-                  onChange={(e) =>
-                    onSubtaskInputChange(task.task_id, e.target.value)
-                  }
-                  placeholder="Add subtask..."
-                  className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                />
-                <button
-                  onClick={() => onCreateSubtask(task.task_id)}
-                  className="bg-purple-600 text-white px-3 py-2 rounded-xl hover:bg-purple-700 text-sm"
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col gap-1">
-          <button
-            onClick={() => onExpand(task.task_id)}
-            className="p-1.5 hover:bg-gray-100 rounded-lg transition"
-          >
-            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
-          <button
-            onClick={() => onEdit(task)}
-            className="p-1.5 hover:bg-yellow-100 rounded-lg transition text-yellow-600"
-          >
-            <Edit2 size={16} />
-          </button>
-          <button
-            onClick={() => onDelete(task.task_id)}
-            className="p-1.5 hover:bg-red-100 rounded-lg transition text-red-600"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-});
+/* new helpers to handle MySQL <-> Postgres / older schema name differences */
+function pickField(obj, candidates) {
+  // return first candidate that exists (not undefined/null) on obj
+  for (const k of candidates) {
+    if (obj[k] !== undefined) return obj[k];
+  }
+  return undefined;
+}
+function normalizeTask(remote) {
+  // unify to: task_id, title_encrypted, description_encrypted, status, due_date, priority, category_id
+  return {
+    task_id: pickField(remote, ["task_id", "id"]),
+    title_enc: pickField(remote, ["title_encrypted", "title_enc", "title"]),
+    description_enc: pickField(remote, [
+      "description_encrypted",
+      "description_enc",
+      "description",
+    ]),
+    status: pickField(remote, ["status"]) ?? "Pending",
+    priority: pickField(remote, ["priority"]) ?? "Medium",
+    due_date: pickField(remote, ["due_date"]) ?? null,
+    category_id: pickField(remote, ["category_id"]) ?? null,
+    // keep other original props if needed
+    ...remote,
+  };
+}
 
 export default function TaskPage() {
   const current = getCurrentUser();
@@ -180,15 +63,27 @@ export default function TaskPage() {
     identity && typeof identity === "string" && identity.includes("-");
 
   const [categories, setCategories] = useState([]);
-  const [catForm, setCatForm] = useState({
-    name: "",
-    color: "#6B7280",
+  const [tasks, setTasks] = useState([]);
+  const [subtasksMap, setSubtasksMap] = useState({});
+  const [subtaskInputs, setSubtaskInputs] = useState({});
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [taskToEdit, setTaskToEdit] = useState(null);
+  const [expandedTasks, setExpandedTasks] = useState({});
+
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterPriority, setFilterPriority] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+
+  const [categoryForm, setCategoryForm] = useState({
+    category_name: "", // changed from name
+    color_code: "#6B7280", // changed from color
     icon: "",
   });
-  const [catLoading, setCatLoading] = useState(false);
-  const [showCatModal, setShowCatModal] = useState(false);
+  const [categoryLoading, setCategoryLoading] = useState(false);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
 
-  const [tasks, setTasks] = useState([]);
   const [taskForm, setTaskForm] = useState({
     title: "",
     description: "",
@@ -196,32 +91,24 @@ export default function TaskPage() {
     due_date: "",
     category_id: "",
   });
-  const [editingTaskId, setEditingTaskId] = useState(null);
-  const [loadingTasks, setLoadingTasks] = useState(false);
-  const [showTaskModal, setShowTaskModal] = useState(false);
-  const [expandedTasks, setExpandedTasks] = useState({});
-
-  const [subtasksMap, setSubtasksMap] = useState({});
-  const [subtaskInputs, setSubtaskInputs] = useState({});
-
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterPriority, setFilterPriority] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
 
   const priorityConfig = {
-    Low: {
+    low: {
       color: "bg-blue-100 text-blue-700",
       gradient: "from-blue-400 to-blue-600",
     },
-    Medium: {
+    medium: {
       color: "bg-yellow-100 text-yellow-700",
       gradient: "from-yellow-400 to-orange-500",
     },
-    High: {
+    high: {
       color: "bg-red-100 text-red-700",
       gradient: "from-red-400 to-red-600",
     },
   };
+
+  const token = localStorage.getItem("authToken");
+  const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : {});
 
   useEffect(() => {
     if (!identity) return;
@@ -230,29 +117,34 @@ export default function TaskPage() {
   }, [identity]);
 
   const loadCategories = async () => {
-    setCatLoading(true);
+    setLoadingTasks(true);
     try {
       const params = isUuid ? { user_uuid: identity } : { user_id: identity };
-      const res = await api.get("/categories", { params });
-      setCategories(res.data.categories || []);
+      const response = await api.get("/categories", {
+        params,
+        headers: authHeaders(),
+      });
+      setCategories(response.data.categories || []);
     } catch (err) {
       toast.error("Failed to load categories");
     } finally {
-      setCatLoading(false);
+      setLoadingTasks(false);
     }
   };
 
   const createCategory = async (e) => {
     e?.preventDefault();
-    if (!catForm.name) return toast.error("Category name required");
+    if (!categoryForm.category_name)
+      return toast.error("Category name required");
     try {
-      const payload = { ...catForm };
+      const payload = { ...categoryForm };
       if (isUuid) payload.user_uuid = identity;
       else payload.user_id = identity;
-      await api.post("/categories", payload);
+
+      await api.post("/categories", payload, { headers: authHeaders() });
       toast.success("Category created");
-      setCatForm({ name: "", color: "#6B7280", icon: "" });
-      setShowCatModal(false);
+      setCategoryForm({ category_name: "", color_code: "#6B7280", icon: "" });
+      setShowCategoryModal(false);
       loadCategories();
     } catch (err) {
       toast.error("Create category failed");
@@ -263,27 +155,32 @@ export default function TaskPage() {
     setLoadingTasks(true);
     try {
       const params = isUuid ? { user_uuid: identity } : { user_id: identity };
-      const res = await api.get("/tasks", { params });
-      const remote = res.data.tasks || [];
+      const response = await api.get("/tasks", { params });
+      const remote = response.data.tasks || [];
       const decrypted = await Promise.all(
         remote.map(async (t) => {
-          let title = t.title_encrypted;
-          let description = t.description_encrypted;
+          let title = t.title_enc;
+          let description = t.description_enc;
           try {
-            title = t.title_encrypted
-              ? await decryptData(identity, t.title_encrypted)
-              : "";
+            title = t.title_enc ? await decryptData(identity, t.title_enc) : "";
           } catch {
             title = "[decrypt failed]";
           }
           try {
-            description = t.description_encrypted
-              ? await decryptData(identity, t.description_encrypted)
+            description = t.description_enc
+              ? await decryptData(identity, t.description_enc)
               : "";
           } catch {
             description = "[decrypt failed]";
           }
-          return { ...t, title, description };
+          // Normalize status and priority to lowercase
+          return {
+            ...t,
+            title,
+            description,
+            status: (t.status || "pending").toLowerCase(),
+            priority: (t.priority_name || "medium").toLowerCase(),
+          };
         })
       );
       setTasks(decrypted);
@@ -297,8 +194,36 @@ export default function TaskPage() {
     }
   };
 
-  const handleTaskInput = (e) =>
-    setTaskForm((p) => ({ ...p, [e.target.name]: e.target.value }));
+  const loadSubtasks = async (taskId) => {
+    try {
+      const response = await api.get(`/subtasks/task/${taskId}`, {
+        headers: authHeaders(),
+      });
+      const remote = response.data.subtasks || [];
+      const decrypted = await Promise.all(
+        remote.map(async (s) => {
+          let title = s.title_enc || s.title_encrypted;
+          try {
+            title = title ? await decryptData(identity, title) : "";
+          } catch {
+            title = "[decrypt failed]";
+          }
+          // Normalize status to lowercase
+          return { ...s, title, status: (s.status || "pending").toLowerCase() };
+        })
+      );
+      setSubtasksMap((m) => ({ ...m, [taskId]: decrypted }));
+    } catch (err) {
+      toast.error("Failed to load subtasks");
+    }
+  };
+
+  const handleTaskInput = (e) => {
+    setTaskForm((prev) => ({
+      ...prev,
+      [e.target.name]: e.target.value,
+    }));
+  };
 
   const saveTask = async (e) => {
     e?.preventDefault();
@@ -306,15 +231,16 @@ export default function TaskPage() {
     if (!identity) return toast.error("Login required");
 
     try {
-      const encTitle = await encryptData(identity, taskForm.title);
-      const encDesc = taskForm.description
+      const title_enc = await encryptData(identity, taskForm.title);
+      const description_enc = taskForm.description
         ? await encryptData(identity, taskForm.description)
         : null;
+
       const payload = {
         user_id: identity,
-        title_encrypted: encTitle,
-        description_encrypted: encDesc,
-        priority: taskForm.priority,
+        title_enc, // changed from title_encrypted
+        description_enc, // changed from description_encrypted
+        priority_name: taskForm.priority, // changed from priority
         due_date: datetimeLocalToMySQL(taskForm.due_date),
         category_id: taskForm.category_id || null,
       };
@@ -324,11 +250,13 @@ export default function TaskPage() {
       }
 
       if (editingTaskId) {
-        await api.put(`/tasks/${editingTaskId}`, payload);
+        await api.put(`/tasks/${editingTaskId}`, payload, {
+          headers: authHeaders(),
+        });
         toast.success("Task updated");
         setEditingTaskId(null);
       } else {
-        await api.post("/tasks", payload);
+        await api.post("/tasks", payload, { headers: authHeaders() });
         toast.success("Task created");
       }
       setTaskForm({
@@ -345,49 +273,7 @@ export default function TaskPage() {
     }
   };
 
-  const loadSubtasks = async (taskId) => {
-    try {
-      const res = await api.get(`/subtasks/task/${taskId}`);
-      const remote = res.data.subtasks || [];
-      const decrypted = await Promise.all(
-        remote.map(async (s) => {
-          let title = s.title_encrypted;
-          try {
-            title = s.title_encrypted
-              ? await decryptData(identity, s.title_encrypted)
-              : "";
-          } catch {
-            title = "[decrypt failed]";
-          }
-          return { ...s, title };
-        })
-      );
-      setSubtasksMap((m) => ({ ...m, [taskId]: decrypted }));
-    } catch (err) {
-      toast.error("Failed to load subtasks");
-    }
-  };
-
-  // Memoize handlers so TaskCard doesn't re-render unnecessarily
-  const handleToggleStatus = useCallback(async (t) => {
-    const newStatus = t.status === "Pending" ? "Completed" : "Pending";
-    try {
-      await api.patch(`/tasks/${t.task_id}/status`, { status: newStatus });
-      toast.success("Status updated");
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.task_id === t.task_id ? { ...task, status: newStatus } : task
-        )
-      );
-    } catch (err) {
-      toast.error("Status update failed");
-    }
-  }, []);
-
-  const handleExpand = useCallback((taskId) => {
-    setExpandedTasks((p) => ({ ...p, [taskId]: !p[taskId] }));
-  }, []);
-
+  // When editing a task, update the form
   const handleEdit = useCallback((t) => {
     setEditingTaskId(t.task_id);
     setTaskForm({
@@ -400,28 +286,81 @@ export default function TaskPage() {
     setShowTaskModal(true);
   }, []);
 
-  const handleDelete = useCallback(async (taskId) => {
-    if (!window.confirm("Delete task?")) return;
+  // Reset form when closing modal
+  const handleCloseModal = () => {
+    setShowTaskModal(false);
+    setEditingTaskId(null);
+    setTaskForm({
+      title: "",
+      description: "",
+      priority: "Medium",
+      due_date: "",
+      category_id: "",
+    });
+  };
+
+  // optimistic status toggle
+  const handleToggleStatus = useCallback(async (t) => {
+    const newStatus = t.status === "pending" ? "completed" : "pending";
     try {
-      await api.delete(`/tasks/${taskId}`);
-      toast.success("Task deleted");
-      setTasks((p) => p.filter((x) => x.task_id !== taskId));
+      await api.patch(
+        `/tasks/${t.task_id}/status`,
+        { status: newStatus },
+        { headers: authHeaders() }
+      );
+      toast.success("Status updated");
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.task_id === t.task_id ? { ...task, status: newStatus } : task
+        )
+      );
     } catch (err) {
-      toast.error("Delete failed");
+      toast.error("Status update failed");
     }
   }, []);
 
-  const handleToggleSubtask = useCallback(async (subtask) => {
-    const newStatus = subtask.status === "Pending" ? "Completed" : "Pending";
+  const handleDelete = useCallback(async (taskId) => {
+    if (!confirm("Delete task?")) return;
+    await taskService.deleteTask(taskId);
+    setTasks((p) => p.filter((x) => x.task_id !== taskId));
+  }, []);
+  const handleCreateSubtask = useCallback(
+    async (taskId) => {
+      const text = (subtaskInputs[taskId] || "").trim();
+      if (!text) return toast.error("Subtask required");
+      try {
+        const enc = await encryptData(identity, text);
+        await api.post(
+          "/subtasks",
+          {
+            task_id: taskId,
+            title_enc: enc, // changed from title_encrypted
+          },
+          { headers: authHeaders() }
+        );
+        toast.success("Subtask added");
+        setSubtaskInputs((s) => ({ ...s, [taskId]: "" }));
+        loadSubtasks(taskId);
+      } catch {
+        toast.error("Add subtask failed");
+      }
+    },
+    [subtaskInputs, identity]
+  );
+
+  const handleToggleSubtask = useCallback(async (s) => {
+    const newStatus = s.status === "pending" ? "completed" : "pending";
     try {
-      await api.patch(`/subtasks/${subtask.subtask_id}/status`, {
-        status: newStatus,
-      });
+      await api.patch(
+        `/subtasks/${s.subtask_id}/status`,
+        { status: newStatus },
+        { headers: authHeaders() }
+      );
       toast.success("Subtask status updated");
       setSubtasksMap((m) => ({
         ...m,
-        [subtask.task_id]: m[subtask.task_id].map((s) =>
-          s.subtask_id === subtask.subtask_id ? { ...s, status: newStatus } : s
+        [s.task_id]: m[s.task_id].map((x) =>
+          x.subtask_id === s.subtask_id ? { ...x, status: newStatus } : x
         ),
       }));
     } catch (err) {
@@ -430,54 +369,23 @@ export default function TaskPage() {
   }, []);
 
   const handleDeleteSubtask = useCallback(async (id, taskId) => {
-    if (!window.confirm("Delete subtask?")) return;
+    if (!confirm("Delete subtask?")) return;
     try {
-      await api.delete(`/subtasks/${id}`);
-      toast.success("Subtask deleted");
+      await taskService.deleteSubtask(id);
       setSubtasksMap((m) => ({
         ...m,
         [taskId]: m[taskId].filter((s) => s.subtask_id !== id),
       }));
-    } catch (err) {
+    } catch {
       toast.error("Delete failed");
     }
   }, []);
 
-  const handleSubtaskInputChange = useCallback((taskId, value) => {
-    setSubtaskInputs((m) => ({ ...m, [taskId]: value }));
-  }, []);
-
-  const handleCreateSubtask = useCallback(
-    async (taskId) => {
-      const text = (subtaskInputs[taskId] || "").trim();
-      if (!text) return toast.error("Subtask required");
-      try {
-        const enc = await encryptData(identity, text);
-        const res = await api.post("/subtasks", {
-          task_id: taskId,
-          title_encrypted: enc,
-        });
-        toast.success("Subtask added");
-        setSubtaskInputs((s) => ({ ...s, [taskId]: "" }));
-        // Add new subtask to local state
-        const newSubtask = res.data.subtask
-          ? { ...res.data.subtask, title: text }
-          : {
-              subtask_id: Math.random(),
-              title: text,
-              status: "Pending",
-              task_id: taskId,
-            };
-        setSubtasksMap((m) => ({
-          ...m,
-          [taskId]: [...(m[taskId] || []), newSubtask],
-        }));
-      } catch (err) {
-        toast.error("Add subtask failed");
-      }
-    },
-    [subtaskInputs, identity]
-  );
+  useEffect(() => {
+    if (!identity) return;
+    loadCategories();
+    loadTasks();
+  }, [identity]);
 
   const filteredTasks = tasks.filter((t) => {
     const matchesPriority = !filterPriority || t.priority === filterPriority;
@@ -485,8 +393,8 @@ export default function TaskPage() {
     return matchesPriority && matchesStatus;
   });
 
-  const pendingCount = tasks.filter((t) => t.status === "Pending").length;
-  const completedCount = tasks.filter((t) => t.status === "Completed").length;
+  const pendingCount = tasks.filter((t) => t.status === "pending").length;
+  const completedCount = tasks.filter((t) => t.status === "completed").length;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50">
@@ -534,7 +442,7 @@ export default function TaskPage() {
           <div className="flex justify-between items-center mb-3">
             <p className="text-sm font-semibold text-gray-700">Categories</p>
             <button
-              onClick={() => setShowCatModal(true)}
+              onClick={() => setShowCategoryModal(true)}
               className="text-xs bg-gradient-to-r from-purple-600 to-pink-600 text-white px-3 py-1.5 rounded-xl hover:from-purple-700 hover:to-pink-700 transition flex items-center gap-1"
             >
               <Plus size={14} />
@@ -555,7 +463,7 @@ export default function TaskPage() {
                     className="rounded-full"
                   />
                   <span className="text-xs font-medium">
-                    {c.icon} {c.name}
+                    {c.icon} {c.category_name}
                   </span>
                 </div>
               ))
@@ -605,7 +513,7 @@ export default function TaskPage() {
           )}
         </div>
 
-        {/* Tasks */}
+        {/* Tasks list */}
         {loadingTasks ? (
           <div className="text-center py-12">
             <div className="inline-block w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
@@ -618,35 +526,41 @@ export default function TaskPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredTasks.map((t) => {
-              const priorityStyle = priorityConfig[t.priority];
-              const isExpanded = expandedTasks[t.task_id];
-              const subs = subtasksMap[t.task_id] || [];
-              const category = categories.find(
-                (c) => c.category_id === t.category_id
-              );
-              return (
-                <TaskCard
-                  key={t.task_id}
-                  task={t}
-                  category={category}
-                  priorityStyle={priorityStyle}
-                  isExpanded={isExpanded}
-                  onToggleStatus={handleToggleStatus}
-                  onExpand={handleExpand}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  subtasks={subs}
-                  onToggleSubtask={handleToggleSubtask}
-                  onDeleteSubtask={handleDeleteSubtask}
-                  subtaskInput={subtaskInputs[t.task_id]}
-                  onSubtaskInputChange={handleSubtaskInputChange}
-                  onCreateSubtask={handleCreateSubtask}
-                />
-              );
-            })}
+            {filteredTasks.map((t) => (
+              <TaskCard
+                key={t.task_id}
+                task={t}
+                category={categories.find(
+                  (c) => c.category_id === t.category_id
+                )}
+                priorityStyle={priorityConfig[t.priority]}
+                isExpanded={!!expandedTasks[t.task_id]}
+                onToggleStatus={handleToggleStatus}
+                onExpand={(id) =>
+                  setExpandedTasks((p) => ({ ...p, [id]: !p[id] }))
+                }
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+                subtasks={subtasksMap[t.task_id] || []}
+                onToggleSubtask={handleToggleSubtask}
+                onDeleteSubtask={handleDeleteSubtask}
+                subtaskInput={subtaskInputs[t.task_id]}
+                onSubtaskInputChange={(tid, val) =>
+                  setSubtaskInputs((m) => ({ ...m, [tid]: val }))
+                }
+                onCreateSubtask={handleCreateSubtask}
+              />
+            ))}
           </div>
         )}
+
+        <TaskForm
+          show={showTaskModal}
+          onClose={handleCloseModal}
+          onSave={saveTask}
+          initial={taskToEdit || {}}
+          categories={categories}
+        />
 
         {/* Floating Add Button */}
         <button
@@ -660,13 +574,13 @@ export default function TaskPage() {
         </button>
 
         {/* Category Modal */}
-        {showCatModal && (
+        {showCategoryModal && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-md flex justify-center items-center z-50 p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
               <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-4 rounded-t-2xl flex justify-between items-center">
                 <h2 className="text-lg font-bold">New Category</h2>
                 <button
-                  onClick={() => setShowCatModal(false)}
+                  onClick={() => setShowCategoryModal(false)}
                   className="hover:bg-white/20 p-1.5 rounded-full"
                 >
                   <X size={20} />
@@ -679,9 +593,12 @@ export default function TaskPage() {
                     Name
                   </label>
                   <input
-                    value={catForm.name}
+                    value={categoryForm.category_name}
                     onChange={(e) =>
-                      setCatForm({ ...catForm, name: e.target.value })
+                      setCategoryForm({
+                        ...categoryForm,
+                        category_name: e.target.value,
+                      })
                     }
                     placeholder="Category name"
                     className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
@@ -694,9 +611,12 @@ export default function TaskPage() {
                     </label>
                     <input
                       type="color"
-                      value={catForm.color}
+                      value={categoryForm.color_code}
                       onChange={(e) =>
-                        setCatForm({ ...catForm, color: e.target.value })
+                        setCategoryForm({
+                          ...categoryForm,
+                          color_code: e.target.value,
+                        })
                       }
                       className="w-full h-10 border-2 border-gray-200 rounded-xl cursor-pointer"
                     />
@@ -706,9 +626,12 @@ export default function TaskPage() {
                       Icon
                     </label>
                     <input
-                      value={catForm.icon}
+                      value={categoryForm.icon}
                       onChange={(e) =>
-                        setCatForm({ ...catForm, icon: e.target.value })
+                        setCategoryForm({
+                          ...categoryForm,
+                          icon: e.target.value,
+                        })
                       }
                       placeholder="📁"
                       className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
@@ -719,7 +642,7 @@ export default function TaskPage() {
                   type="submit"
                   className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-2 rounded-xl hover:from-purple-700 hover:to-pink-700 text-sm font-medium"
                 >
-                  {catLoading ? "Creating..." : "Create Category"}
+                  {categoryLoading ? "Creating..." : "Create Category"}
                 </button>
               </form>
             </div>
@@ -802,7 +725,7 @@ export default function TaskPage() {
                       <option value="">No category</option>
                       {categories.map((c) => (
                         <option key={c.category_id} value={c.category_id}>
-                          {c.name}
+                          {c.category_name}
                         </option>
                       ))}
                     </select>
