@@ -15,8 +15,8 @@ import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 // import Todos from "./pages/Todos";
 import Login from "./pages/Login";
-import TaskPage from "./pages/Task";
 import Diary from "./pages/Diary"; // <--- added
+import Tasks from "./pages/Tasks";
 
 export default function App() {
   return (
@@ -30,7 +30,7 @@ export default function App() {
             <Layout>
               <Routes>
                 <Route path="dashboard" element={<Dashboard />} />
-                <Route path="tasks" element={<TaskPage />} />
+                <Route path="tasks" element={<Tasks />} />
                 <Route path="diary" element={<Diary />} />
 
                 <Route path="" element={<Navigate to="dashboard" replace />} />

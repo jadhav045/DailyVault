@@ -55,7 +55,7 @@ export const createCategory = async (req, res) => {
     const user_id = await getUserIdFromJwt(req);
     if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-    console.log(req.body);
+    console.log("C", req.body);
     const { category_name, color_code = "#FFFFFF" } = req.body;
     // const category_name = na
     // me;
@@ -78,15 +78,22 @@ export const createCategory = async (req, res) => {
 
     return res
       .status(201)
-      .json({ category_id: newCategoryId, message: "Category created" });
+      .json({
+        success: true,
+        category_id: newCategoryId,
+        message: "Category created",
+      });
   } catch (err) {
     console.error("❌ createCategory:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error" });
   }
 };
 
 export const getCategories = async (req, res) => {
   try {
+    console.log("Getting categories");
     const user_id = await getUserIdFromJwt(req);
     if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
@@ -94,10 +101,10 @@ export const getCategories = async (req, res) => {
       "SELECT * FROM Categories WHERE user_id = $1 ORDER BY category_name",
       [user_id]
     );
-    return res.json({ categories: rows });
+    return res.json({ categories: rows, success:true });
   } catch (err) {
     console.error("❌ getCategories:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error", success:false  });
   }
 };
 
@@ -178,6 +185,7 @@ export const deleteCategory = async (req, res) => {
 export const createTask = async (req, res) => {
   try {
     const user_id = await getUserIdFromJwt(req);
+    console.log(req.body);
     if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
     const {
@@ -228,38 +236,59 @@ export const getTasks = async (req, res) => {
     const user_id = await getUserIdFromJwt(req);
     if (!user_id) return res.status(401).json({ message: "Unauthorized" });
 
-    // console.log(user_id);
-    let sql = "SELECT * FROM Tasks WHERE user_id = $1";
+    // Extract filters and pagination params
+    const { status, category, priority, sort, page = 1, limit = 5 } = req.query;
+
+    // Base query
+    let sql = `SELECT * FROM Tasks WHERE user_id = $1`;
     const vals = [user_id];
     let paramIndex = 2;
 
-    if (req.query.status) {
+    // Filters
+    if (status) {
       sql += ` AND status = $${paramIndex++}`;
-      vals.push(req.query.status);
+      vals.push(status);
     }
-    if (req.query.category) {
+    if (category) {
       sql += ` AND category_id = $${paramIndex++}`;
-      vals.push(req.query.category);
+      vals.push(category);
     }
-    if (req.query.priority) {
+    if (priority) {
       sql += ` AND priority_name = $${paramIndex++}`;
-      vals.push(req.query.priority);
+      vals.push(priority);
     }
 
-    // NOTE: Server-side search on encrypted text ('title_enc') is not feasible.
-    // This search logic should be handled on the client-side after decryption.
+    // Sorting
+    if (sort === "due_date") sql += ` ORDER BY due_date ASC NULLS LAST`;
+    else sql += ` ORDER BY created_at DESC`;
 
-    if (req.query.sort === "due_date")
-      sql += " ORDER BY due_date ASC NULLS LAST";
-    else sql += " ORDER BY created_at DESC";
+    // Pagination
+    const offset = (page - 1) * limit;
+    sql += ` LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    vals.push(Number(limit), Number(offset));
 
     const { rows } = await pool.query(sql, vals);
 
-    // console.log("ROWS", rows[0]);
-    return res.json({ tasks: rows });
+    // Total count for frontend
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM Tasks WHERE user_id = $1`,
+      [user_id]
+    );
+    const totalTasks = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalTasks / limit);
+
+    return res.json({
+      tasks: rows,
+      page: Number(page),
+      totalPages,
+      totalTasks,
+      success: true,
+    });
   } catch (err) {
     console.error("❌ getTasks:", err);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", success: false });
   }
 };
 
