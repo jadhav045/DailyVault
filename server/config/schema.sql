@@ -17,17 +17,24 @@ CREATE TABLE IF NOT EXISTS Users (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
--- Table: Categories (Project Context)
-CREATE TABLE IF NOT EXISTS Categories (
-    category_id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id CHAR(36) NOT NULL,
-    category_name VARCHAR(100) NOT NULL,
-    color_code VARCHAR(10) DEFAULT '#FFFFFF',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
-);
+-- ==============================
+-- 🗂️ Table: Categories
+-- Purpose: Stores user-defined task categories (e.g., Work, Personal, Study)
+-- ==============================
 
+CREATE TABLE IF NOT EXISTS Categories (
+    category_id      INT AUTO_INCREMENT PRIMARY KEY,       -- Unique ID for each category
+    user_id          CHAR(36) NOT NULL,                    -- Linked to Users.user_id (UUID)
+    category_name    VARCHAR(100) NOT NULL,                -- Category label
+    color_code       VARCHAR(10) DEFAULT '#FFFFFF',        -- Hex color for UI display
+    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,   -- When the category was created
+    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP 
+                      ON UPDATE CURRENT_TIMESTAMP,         -- Auto-update on modification
+
+    -- Relationships
+    FOREIGN KEY (user_id) REFERENCES Users(user_id)
+        ON DELETE CASCADE                                 -- Delete all user categories if user is deleted
+);
 
 -- Table: Tasks
 CREATE TABLE IF NOT EXISTS Tasks (

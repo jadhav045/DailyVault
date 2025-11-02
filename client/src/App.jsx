@@ -6,6 +6,8 @@ import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import Dashboard from "./pages/Dashboard";
 import ResetPassword from "./pages/ResetPassword";
+import ProtectedRoute from "./context/ProtectedRoute";
+// import ProtectedRoute from "./components/ProtectedRoute";
 
 export default function App() {
   return (
@@ -16,9 +18,17 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/" element={<Dashboard />} />
-      </Routes>
 
+        {/* Protected dashboard route */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
     </BrowserRouter>
   );
 }

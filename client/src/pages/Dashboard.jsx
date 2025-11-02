@@ -1,81 +1,89 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useToast } from "../context/ToastContext";
-// import {jwtDecode} from "jwt-decode"; // npm install jwt-decode
-import {jwtDecode} from "jwt-decode";
+import React, { useState } from "react";
+import CategoryManager from "./CategoryManager"; // For categories CRUD
+import TasksPage from "./TasksPage"; // Placeholder for your tasks component
+import DiaryPage from "./DiaryPage"; // Placeholder for your diary component
 
 export default function Dashboard() {
-  const [decodedToken, setDecodedToken] = useState(null);
-  const [toastShown, setToastShown] = useState(false);
-  const navigate = useNavigate();
-  const { showToast } = useToast();
+  const [activeTab, setActiveTab] = useState("tasks");
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-
-    if (!token) {
-      if (!toastShown) {
-        showToast("You must log in first!", "error");
-        setToastShown(true);
-      }
-      navigate("/login");
-      return;
+  const renderContent = () => {
+    switch (activeTab) {
+      case "tasks":
+        return <TasksPage />;
+      case "diary":
+        return <DiaryPage />;
+      case "categories":
+        return <CategoryManager />;
+      default:
+        return <TasksPage />;
     }
-
-    try {
-
-      const decoded = jwtDecode(token);
-
-      setDecodedToken(decoded);
-
-      if (!toastShown) {
-        showToast("Welcome to your dashboard!", "success");
-        setToastShown(true);
-      }
-    } catch (err) {
-      if (!toastShown) {
-        showToast("Invalid token. Please log in again.", "error");
-        setToastShown(true);
-      }
-      localStorage.removeItem("token");
-      navigate("/login");
-    }
-  }, [navigate, showToast, toastShown]);
-
-  if (!decodedToken)
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-100">
-        <div className="text-gray-600 text-lg">Loading token data...</div>
-      </div>
-    );
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex flex-col items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-lg w-full max-w-md p-8 text-center">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-          Token Details 🔐
-        </h2>
-
-        <div className="text-left bg-gray-50 rounded-lg p-4 text-sm font-mono text-gray-700">
-          {Object.entries(decodedToken).map(([key, value]) => (
-            <div key={key} className="mb-2">
-              <span className="font-semibold">{key}: </span>
-              <span>{String(value)}</span>
-            </div>
-          ))}
+    <div className="flex min-h-screen bg-gray-50">
+      {/* Sidebar */}
+      <aside className="w-64 bg-indigo-700 text-white flex flex-col justify-between">
+        <div>
+          <h2 className="text-2xl font-bold p-4 border-b border-indigo-500">
+            Dashboard
+          </h2>
+          <nav className="mt-4">
+            <button
+              onClick={() => setActiveTab("tasks")}
+              className={`w-full text-left px-6 py-3 hover:bg-indigo-600 transition ${
+                activeTab === "tasks" ? "bg-indigo-600" : ""
+              }`}
+            >
+              🧩 Tasks
+            </button>
+            <button
+              onClick={() => setActiveTab("diary")}
+              className={`w-full text-left px-6 py-3 hover:bg-indigo-600 transition ${
+                activeTab === "diary" ? "bg-indigo-600" : ""
+              }`}
+            >
+              📖 Diary
+            </button>
+            <button
+              onClick={() => setActiveTab("categories")}
+              className={`w-full text-left px-6 py-3 hover:bg-indigo-600 transition ${
+                activeTab === "categories" ? "bg-indigo-600" : ""
+              }`}
+            >
+              🗂️ Categories
+            </button>
+          </nav>
         </div>
 
-        <button
-          onClick={() => {
-            localStorage.removeItem("token");
-            showToast("Logged out successfully!", "info");
-            navigate("/login");
-          }}
-          className="mt-6 w-full py-3 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-all"
-        >
-          Logout
-        </button>
-      </div>
+        <div className="p-4 border-t border-indigo-500">
+          <button
+            onClick={() => {
+              localStorage.removeItem("token");
+              window.location.href = "/login";
+            }}
+            className="w-full bg-red-500 hover:bg-red-600 py-2 rounded-lg font-medium"
+          >
+            Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 p-6 overflow-auto">
+        <header className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-semibold text-gray-800 capitalize">
+            {activeTab}
+          </h1>
+          <div className="flex items-center gap-3">
+            <span className="text-gray-600 text-sm">Welcome 👋</span>
+            <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-white font-bold">
+              U
+            </div>
+          </div>
+        </header>
+
+        <section>{renderContent()}</section>
+      </main>
     </div>
   );
 }

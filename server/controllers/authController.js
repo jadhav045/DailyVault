@@ -134,7 +134,7 @@ export const login = async (req, res) => {
       return res.status(400).json({ message: "Invalid email or password" });
 
     const token = jwt.sign({ id: user.user_id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
+      expiresIn: "10d",
     });
     res.json({ message: "Login successful", token });
   } catch (err) {
@@ -271,6 +271,11 @@ export const resendOtp = async (req, res) => {
   }
 };
 
+export const testEndpoint = (req, res) => {
+  try {
+    console.log("Test endpoint accessed by user:", req.user); 
+    const users = db.query("SELECT * FROM Users");
 
-
-
+    res.status(200).json({ message: "Test endpoint is working!", users });
+  } catch (error) {}
+};

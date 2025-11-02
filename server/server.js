@@ -2,7 +2,8 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import authRoutes from "./routes/authRoutes.js";
-
+import taskRoutes from "./routes/taskRoutes.js";
+import categoryRoutes from "./routes/categoryRoutes.js";
 import "./config/db.js"; // ✅ Auto-initializes the DB connection + schema
 
 // dotenv.config();
@@ -26,7 +27,8 @@ app.use(express.json());
 
 // --- Mount Routers ---
 app.use("/api/auth", authRoutes);
-
+app.use("/api/tasks", taskRoutes);
+app.use("/api/categories", categoryRoutes);
 // ✅ Health check route
 app.get("/", (req, res) => {
   res.send("🚀 Server is running and DB initialized successfully!");
