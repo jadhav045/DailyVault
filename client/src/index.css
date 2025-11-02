@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+.custom-toast {
+  min-width: 120px !important;
+  /* smaller width */
+  font-size: 12px !important;
+  /* smaller text */
+  padding: 1px 10px !important;
+  /* small padding */
+  border-radius: 8px !important;
+  /* rounded corners */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  /* subtle shadow */
+  background-color: #ffffff !important;
+  /* dark background */
+  color: #000000 !important;
+  /* white text */
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out;
+}

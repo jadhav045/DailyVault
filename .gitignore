@@ -1,0 +1,69 @@
+# Node modules
+node_modules/
+**/node_modules/
+
+# Environment files
+.env
+.env.*      # .env.local, .env.development, etc.
+
+# Build outputs
+/dist
+/build
+/.next
+/.parcel-cache
+/.turbo
+/out
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Coverage
+coverage/
+coverage-final.json
+nyc_output/
+
+# Test outputs
+jest-cache/
+jest-results/
+
+# Lock files (keep if you want to track; commonly tracked — uncomment to ignore)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Misc
+*.log
+*.tmp
+*.temp
+
+# Client build (React)
+client/build/
+client/dist/
+
+# Server uploads / runtime files
+/uploads
+/tmp
+/.env.local
+/local.env
+
+# Ignore sensitive files
+credentials.json
+secret-*.json
+
+# Optional: ignore IDE specific files
+*.iml
+
+# End of file
