@@ -133,9 +133,12 @@ export const login = async (req, res) => {
     if (!isMatch)
       return res.status(400).json({ message: "Invalid email or password" });
 
-    const token = jwt.sign({ id: user.user_id }, process.env.JWT_SECRET, {
-      expiresIn: "10d",
-    });
+    const token = jwt.sign(
+      { id: user.user_id }, // payload → what’s inside the token
+      process.env.JWT_SECRET, // secret key to sign and verify token
+      { expiresIn: "10d" } // token validity duration
+    );
+
     res.json({ message: "Login successful", token });
   } catch (err) {
     console.error(err);
@@ -273,7 +276,7 @@ export const resendOtp = async (req, res) => {
 
 export const testEndpoint = (req, res) => {
   try {
-    console.log("Test endpoint accessed by user:", req.user); 
+    console.log("Test endpoint accessed by user:", req.user);
     const users = db.query("SELECT * FROM Users");
 
     res.status(200).json({ message: "Test endpoint is working!", users });
