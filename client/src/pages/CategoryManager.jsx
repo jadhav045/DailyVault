@@ -18,20 +18,8 @@ export default function CategoryManager() {
   const [editingColor, setEditingColor] = useState("#6366F1");
   const [selected, setSelected] = useState([]);
 
-  // Fetch categories from backend
-  const fetchCategories = async () => {
-    try {
-      const res = await api.get("/categories");
-      const list = Array.isArray(res.data) ? res.data : res.data.categories;
-      if (Array.isArray(list)) dispatch(setCategories(list));
-    } catch (err) {
-      console.error("❌ Failed to fetch categories:", err);
-    }
-  };
 
-  useEffect(() => {
-    fetchCategories();
-  }, []);
+ 
 
   // Create new category
   const handleAdd = async () => {

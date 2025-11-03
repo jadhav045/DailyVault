@@ -41,30 +41,25 @@ CREATE TABLE IF NOT EXISTS Tasks (
     task_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id CHAR(36) NOT NULL,
     category_id INT,
-    title VARCHAR(255) NOT NULL,
+    title TEXT NOT NULL,
     description TEXT,
     due_date DATE,
-    
     status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
     priority ENUM('low', 'medium', 'high', 'critical') DEFAULT 'medium',
-    
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    
     FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (category_id) REFERENCES Categories(category_id) ON DELETE SET NULL
 );
-
 
 -- Table: Subtasks (Checklist Items)
 CREATE TABLE IF NOT EXISTS Subtasks (
     subtask_id INT AUTO_INCREMENT PRIMARY KEY,
     task_id INT NOT NULL,
-    title VARCHAR(255) NOT NULL,
+    title TEXT NOT NULL,
     is_completed BOOLEAN DEFAULT FALSE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    
     FOREIGN KEY (task_id) REFERENCES Tasks(task_id) ON DELETE CASCADE
 );
 

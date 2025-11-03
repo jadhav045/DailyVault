@@ -1,12 +1,27 @@
-import { configureStore } from "@reduxjs/toolkit";
-import taskReducer from "../store/tasksSlice.js"; // Import your slice
+import { configureStore, combineReducers } from "@reduxjs/toolkit";
+import storage from "redux-persist/lib/storage/index.js"; // <-- key fix
+import { persistReducer, persistStore } from "redux-persist";
 import categoryReducer from "./categorySlice.js";
-const store = configureStore({
-  reducer: {
-    tasks: taskReducer, // Add your reducers here
-        categories: categoryReducer,
+import taskReducer from "./tasksSlice.js";
 
-  },
+const persistConfig = {
+  key: "root",
+  storage,
+};
+
+const rootReducer = combineReducers({
+  categories: categoryReducer,
+  tasks: taskReducer,
 });
 
-export default store;
+const persistedReducer = persistReducer(persistConfig, rootReducer);
+
+export const store = configureStore({
+  reducer: persistedReducer,
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: false, // suppress redux-persist serialization warnings
+    }),
+});
+
+export const persistor = persistStore(store);

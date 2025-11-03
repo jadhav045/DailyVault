@@ -1,7 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import CategoryManager from "./CategoryManager"; // For categories CRUD
 import TasksPage from "./TasksPage"; // Placeholder for your tasks component
 import DiaryPage from "./DiaryPage"; // Placeholder for your diary component
+import api from "../api/api";
+import { setCategories } from "../store/categorySlice";
+import { useDispatch } from "react-redux";
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState("tasks");
@@ -18,7 +21,22 @@ export default function Dashboard() {
         return <TasksPage />;
     }
   };
+  const dispatch = useDispatch();
 
+  // Fetch categories from backend
+  const fetchCategories = async () => {
+    try {
+      const res = await api.get("/categories");
+      const list = Array.isArray(res.data) ? res.data : res.data.categories;
+      if (Array.isArray(list)) dispatch(setCategories(list));
+    } catch (err) {
+      console.error("❌ Failed to fetch categories:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Sidebar */}
