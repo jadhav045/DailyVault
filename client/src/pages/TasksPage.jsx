@@ -26,6 +26,8 @@ import {
 
 import TaskForm from "../components/TaskForm.jsx";
 import TaskList from "../components/TaskList.jsx";
+import FiltersBar from "../components/FiltersBar.jsx";
+import PaginationControls from "../components/PaginationControls.jsx";
 
 const TasksPage = () => {
   const dispatch = useDispatch();
@@ -35,19 +37,18 @@ const TasksPage = () => {
   const token = localStorage.getItem("token");
 
   const [showForm, setShowForm] = useState(false);
-  const [editTask, setEditTask] = useState(null); // ✅ for edit mode
+  const [editTask, setEditTask] = useState(null);
 
-  // Filters
   const [filters, setFilters] = useState({
     category_id: "",
     priority: "",
     status: "",
   });
 
-  // Pagination
   const [page, setPage] = useState(1);
   const pageSize = 5;
 
+  // ----------- FETCH TASKS -----------
   const fetchTasks = async () => {
     dispatch(setLoading(true));
     const data = await getTasks(token);
@@ -59,14 +60,13 @@ const TasksPage = () => {
     fetchTasks();
   }, []);
 
-  // CREATE
+  // ----------- TASK CRUD -----------
   const handleCreateTask = async (taskData) => {
     const newTask = await createTask(token, taskData);
     dispatch(addTask(newTask.task));
     setShowForm(false);
   };
 
-  // UPDATE STATUS (toggle complete/pending)
   const handleUpdate = async (task) => {
     const nextStatus =
       task.status?.toLowerCase() === "completed" ? "pending" : "completed";
@@ -81,7 +81,6 @@ const TasksPage = () => {
     }
   };
 
-  // ✅ UPDATE (edit form)
   const handleUpdateTask = async (formData) => {
     try {
       const response = await updateAPI(token, formData.task_id, formData);
@@ -99,13 +98,13 @@ const TasksPage = () => {
     dispatch(deleteTask(id));
   };
 
+  // ----------- FILTERING + PAGINATION -----------
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
     setFilters((prev) => ({ ...prev, [name]: value }));
     setPage(1);
   };
 
-  // FILTERED + PAGINATED
   const filteredTasks = useMemo(() => {
     return list.filter((task) => {
       const matchCategory =
@@ -124,11 +123,6 @@ const TasksPage = () => {
   );
 
   // ----------- SUBTASKS -----------
-  const handleLoadSubtasks = async (task_id) => {
-    const subtasks = await getSubtasks(token, task_id);
-    dispatch(setSubtasks({ task_id, subtasks }));
-  };
-
   const handleAddSubtask = async (task_id, title) => {
     const newSub = await createSubtask(token, task_id, { title });
     dispatch(addSubtask({ task_id, subtask: newSub }));
@@ -146,6 +140,7 @@ const TasksPage = () => {
     dispatch(deleteSubtask({ task_id, subtask_id }));
   };
 
+  // ----------- RENDER -----------
   return (
     <div className="p-6">
       {/* Header */}
@@ -153,7 +148,7 @@ const TasksPage = () => {
         <h2 className="text-xl font-semibold">🗂 Task Manager</h2>
         <button
           onClick={() => {
-            setEditTask(null); // ✅ ensure it's not in edit mode
+            setEditTask(null);
             setShowForm(true);
           }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
@@ -162,7 +157,7 @@ const TasksPage = () => {
         </button>
       </div>
 
-      {/* ✅ Unified Form for Create + Edit */}
+      {/* Form */}
       {showForm && (
         <TaskForm
           onSubmit={editTask ? handleUpdateTask : handleCreateTask}
@@ -170,64 +165,18 @@ const TasksPage = () => {
             setShowForm(false);
             setEditTask(null);
           }}
-          initialData={editTask} // ✅ prefill when editing
+          initialData={editTask}
         />
       )}
 
-         {/* {showForm && (
-              <TaskForm
-                initialData={editTask}
-                onSubmit={editTask ? handleEditTask : handleCreateTask}
-                onClose={() => {
-                  setShowForm(false);
-                  setEditTask(null);
-                }}
-              />
-            )} */}
-
       {/* Filters */}
-      <div className="flex gap-3 mb-4 flex-wrap">
-        <select
-          name="category_id"
-          value={filters.category_id}
-          onChange={handleFilterChange}
-          className="border px-3 py-2 rounded"
-        >
-          <option value="">All Categories</option>
-          {categories.map((cat) => (
-            <option key={cat.category_id} value={cat.category_id}>
-              {cat.category_name}
-            </option>
-          ))}
-        </select>
+      <FiltersBar
+        filters={filters}
+        categories={categories}
+        onChange={handleFilterChange}
+      />
 
-        <select
-          name="priority"
-          value={filters.priority}
-          onChange={handleFilterChange}
-          className="border px-3 py-2 rounded"
-        >
-          <option value="">All Priorities</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="critical">Critical</option>
-        </select>
-
-        <select
-          name="status"
-          value={filters.status}
-          onChange={handleFilterChange}
-          className="border px-3 py-2 rounded"
-        >
-          <option value="">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="in_progress">In Progress</option>
-          <option value="completed">Completed</option>
-        </select>
-      </div>
-
-      {/* Tasks */}
+      {/* Task List */}
       <TaskList
         tasks={paginatedTasks}
         loading={loading}
@@ -245,33 +194,11 @@ const TasksPage = () => {
       />
 
       {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="mt-4 flex justify-center items-center gap-3">
-          <button
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-            className={`border px-3 py-1 rounded ${
-              page <= 1 ? "opacity-50 cursor-not-allowed" : ""
-            }`}
-          >
-            Prev
-          </button>
-
-          <span>
-            Page {page} / {totalPages}
-          </span>
-
-          <button
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-            className={`border px-3 py-1 rounded ${
-              page >= totalPages ? "opacity-50 cursor-not-allowed" : ""
-            }`}
-          >
-            Next
-          </button>
-        </div>
-      )}
+      <PaginationControls
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+      />
     </div>
   );
 };

@@ -1,37 +1,31 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import api from "../api/api";
 import {
-  setCategories,
   addCategory,
   updateCategory,
   deleteCategory,
 } from "../store/categorySlice";
+import CategoryForm from "../components/CategoryForm.jsx";
+import CategoryList from "../components/CategoryList.jsx";
 
 export default function CategoryManager() {
   const dispatch = useDispatch();
   const categories = useSelector((state) => state.categories.list);
-  const [newCategory, setNewCategory] = useState("");
-  const [newColor, setNewColor] = useState("#6366F1"); // Default indigo
+  const [selected, setSelected] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [editingName, setEditingName] = useState("");
   const [editingColor, setEditingColor] = useState("#6366F1");
-  const [selected, setSelected] = useState([]);
-
-
- 
 
   // Create new category
-  const handleAdd = async () => {
-    if (!newCategory.trim()) return;
+  const handleAdd = async (name, color) => {
+    if (!name.trim()) return;
     try {
       const res = await api.post("/categories", {
-        category_name: newCategory,
-        color_code: newColor,
+        category_name: name,
+        color_code: color,
       });
       dispatch(addCategory(res.data.category || res.data));
-      setNewCategory("");
-      setNewColor("#6366F1");
     } catch (err) {
       console.error("❌ Failed to add category:", err);
     }
@@ -52,7 +46,7 @@ export default function CategoryManager() {
     }
   };
 
-  // Delete single category
+  // Delete single
   const handleDelete = async (id) => {
     try {
       await api.delete(`/categories/${id}`);
@@ -62,7 +56,7 @@ export default function CategoryManager() {
     }
   };
 
-  // Delete multiple categories
+  // Delete multiple
   const handleDeleteMultiple = async () => {
     if (selected.length === 0) return;
     try {
@@ -87,30 +81,8 @@ export default function CategoryManager() {
           Category Manager 🗂️
         </h2>
 
-        {/* Add new category */}
-        <div className="flex gap-2 mb-4">
-          <input
-            type="text"
-            placeholder="New category name"
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            className="flex-1 border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-          <input
-            type="color"
-            value={newColor}
-            onChange={(e) => setNewColor(e.target.value)}
-            className="w-12 h-10 border rounded cursor-pointer"
-          />
-          <button
-            onClick={handleAdd}
-            className="bg-indigo-500 text-white px-4 rounded-lg hover:bg-indigo-600"
-          >
-            Add
-          </button>
-        </div>
+        <CategoryForm onAdd={handleAdd} />
 
-        {/* Delete multiple button */}
         {selected.length > 0 && (
           <button
             onClick={handleDeleteMultiple}
@@ -120,75 +92,19 @@ export default function CategoryManager() {
           </button>
         )}
 
-        {/* Category list */}
-        <ul className="divide-y divide-gray-200">
-          {categories.map((cat) => (
-            <li
-              key={cat.category_id}
-              className="flex items-center justify-between py-2"
-            >
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(cat.category_id)}
-                  onChange={() => toggleSelect(cat.category_id)}
-                />
-
-                {/* Color Swatch */}
-                <span
-                  className="w-5 h-5 rounded-full border"
-                  style={{ backgroundColor: cat.color_code }}
-                ></span>
-
-                {editingId === cat.category_id ? (
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      className="border p-1 rounded w-32"
-                    />
-                    <input
-                      type="color"
-                      value={editingColor}
-                      onChange={(e) => setEditingColor(e.target.value)}
-                      className="w-8 h-8 rounded"
-                    />
-                  </div>
-                ) : (
-                  <span>{cat.category_name}</span>
-                )}
-              </div>
-
-              <div className="flex gap-2">
-                {editingId === cat.category_id ? (
-                  <button
-                    onClick={() => handleUpdate(cat.category_id)}
-                    className="text-green-600 font-medium"
-                  >
-                    Save
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setEditingId(cat.category_id);
-                      setEditingName(cat.category_name);
-                      setEditingColor(cat.color_code || "#6366F1");
-                    }}
-                    className="text-blue-600 font-medium"
-                  >
-                    Edit
-                  </button>
-                )}
-                <button
-                  onClick={() => handleDelete(cat.category_id)}
-                  className="text-red-500 font-medium"
-                >
-                  Delete
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <CategoryList
+          categories={categories}
+          selected={selected}
+          editingId={editingId}
+          editingName={editingName}
+          editingColor={editingColor}
+          toggleSelect={toggleSelect}
+          setEditingId={setEditingId}
+          setEditingName={setEditingName}
+          setEditingColor={setEditingColor}
+          handleUpdate={handleUpdate}
+          handleDelete={handleDelete}
+        />
       </div>
     </div>
   );

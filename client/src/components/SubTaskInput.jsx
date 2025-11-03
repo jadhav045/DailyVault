@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CheckCircle, Circle, Trash2, PlusCircle } from "lucide-react";
+import { PlusCircle } from "lucide-react";
 
 const SubtaskInput = ({ onAdd }) => {
   const [title, setTitle] = useState("");
@@ -42,3 +42,5 @@ const SubtaskInput = ({ onAdd }) => {
     </form>
   );
 };
+
+export default SubtaskInput;
